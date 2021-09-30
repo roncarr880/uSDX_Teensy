@@ -1,2 +1,2 @@
-# uSDR_Teensy
+# uSDX_Teensy
 Just getting started
