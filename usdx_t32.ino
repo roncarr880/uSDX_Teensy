@@ -7,20 +7,29 @@
  *   Current plan is to provide a provision to convert between the original uSDX processor and the Teensy
  *     by swapping a few parts in and out, with the Teensy mounted on the QRP-LABS development board.
  *   Will try using a Nokia display, daylight readable, fun to program, fast SPI operation.
- *   Alternate display:  OLED 128x64 I2C.  Basically using the same library as the Nokia so can't compile 
- *   both together.
+ *   Alternate display:  OLED 128x64 I2C.   
+ *     To compile both together need to have just one copy of current fonts as both 
+ *     libraries are based on the same code from Rinky Dink Electronics.
  *     
  *     
  */
 
-// testing display with character based library
-// this library uses soft SPI but I wired to the hardware SPI pins
-// 84 x 48 pixels or 6 lines by 14 characters in text mode
+//  Pick a screen:  Nokia LCD or I2C 128x64 OLED
+#define USE_OLED
+#define USE_LCD
 
-// removed pin to port code from the library in this copy. Changed to digitalWriteFast.
-#include <LCD5110_Basic_t.h>
-//#include <OLED1306_Basic.h>
-#include <Wire.h>                 // use wire code to set up Pin Mux registers
+// this library uses soft SPI but I wired to the hardware SPI pins in case of future improvements.
+// hardware spi would be tricky as the D/C pin needs to be held in the correct state during SPI transfer.
+// 84 x 48 pixels or 6 lines by 14 characters in text mode
+#ifdef USE_LCD
+  // removed pin to port code in this copy of the library as it didn't compile for ARM
+  // Changed to digitalWriteFast.
+ #include <LCD5110_Basic_t.h>
+#endif
+#ifdef USE_OLED 
+ #include <OLED1306_Basic.h>
+#endif
+#include <Wire.h>       // use wire library code to set up Pin Mux registers
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -31,11 +40,17 @@ extern unsigned char MediumNumbers[];
 #define ROW2  16
 #define ROW3  24
 #define ROW4  32
-#define ROW5  40
+#define ROW5  40          // end of LCD
+#define ROW6  48
+#define ROW7  56          // OLED has two more text rows
 
-//   ( sclk mosi d/c rst cs )
-LCD5110 LCD( 13,11,9,8,10 );   //
-//OLED1306 OLD;
+#ifdef USE_LCD
+   //   ( sclk mosi d/c rst cs )
+   LCD5110 LCD( 13,11,9,8,10 );
+#endif
+#ifdef USE_OLED
+   OLED1306 OLD;
+#endif
 
 
 uint32_t freq = 18104600L;
@@ -45,14 +60,20 @@ uint32_t freq = 18104600L;
 
 void setup() {
    int contrast = 68;
-   LCD.InitLCD(contrast);
-   LCD.setFont(SmallFont);
 
-   //char msg[] = "Radio";
-   //LCD.print(msg,0,ROW3);
-   // some junk writes to screen
-   LCD.print((char *)("Radio Active23"),0,ROW5); 
-   LCD.print((char *)("USB"), 0,ROW0 );
+   #ifdef USE_LCD
+    LCD.InitLCD(contrast);
+    LCD.setFont(SmallFont);
+    LCD.print((char *)("Radio Active23"),0,ROW5);    // just some junk to see on the screen
+    LCD.print((char *)("USB"), 0,ROW0 );
+   #endif
+
+   #ifdef USE_OLED
+     OLD.InitLCD();
+     OLD.setFont(SmallFont);
+     OLD.print((char *)("USB"), 0,ROW0 );
+     OLD.print((char *)("Radio Active23"),0,ROW7); 
+   #endif
 
    freq_display();
 }
@@ -66,13 +87,23 @@ void loop() {
 void freq_display(){
 int rem;
   
-   LCD.setFont(MediumNumbers);
-   LCD.printNumI(freq/1000,0,ROW1,5,'/');       // '/' is a leading space with altered font table
-   LCD.setFont(SmallFont);
    rem = freq % 1000;
-   LCD.printNumI(rem,62,ROW2,3,'0');   
+   #ifdef USE_LCD
+    LCD.setFont(MediumNumbers);
+    LCD.printNumI(freq/1000,0,ROW1,5,'/');       // '/' is a leading space with altered font table
+    LCD.setFont(SmallFont);
+    LCD.printNumI(rem,62,ROW2,3,'0');
+   #endif
+
+   #ifdef USE_OLED
+    OLD.setFont(MediumNumbers);
+    OLD.printNumI(freq/1000,4*12,ROW2,5,'/');
+    OLD.setFont(SmallFont);
+    OLD.printNumI(rem,9*12,ROW2,3,'0');
+   #endif
 }
 
+/**************************************************************************/
 /*  I2C write only implementation using polling of the hardware registers */
 /*  Teensy 3.2 version  */
 /*  most functions do not block */
@@ -106,7 +137,7 @@ int next;
   while( i2out == next ) i2poll();
   i2buf[i2in++] = data;
   i2in &= (I2BUFSIZE - 1);
-  //i2poll();
+  //i2poll();   // !!! did this cause an error?
 }
 
 void i2stop( ){
@@ -146,7 +177,7 @@ static int data;
            }
         }
       break; 
-      case 1:  // wait for bus busy, send saved data which has the address
+      case 1:  // wait for bus busy (start done), send saved data which has the address
          if( (I2C0_S & 0x20) ){    // test busy bit
             state = 2;
             I2C0_D = data;
