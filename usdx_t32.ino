@@ -103,6 +103,7 @@ extern unsigned char MediumNumbers[];
 // encoder users
 #define FREQ 0
 #define MENUS 1
+#define VOLUME 2
 int encoder_user;
 
 // Menus:  Long press to enter
@@ -128,17 +129,52 @@ struct BAND_STACK bandstack[] = {    // index is the band
   { LSB ,  7163000, 1000 },
   { CW  , 10105000,  100 },
   { USB , 14100000, 1000 },
-  { CW  , 18101000,  100 }
+  { USB  ,18101000, 1000 }
 };
 
-uint32_t freq = 18104600L;
+uint32_t freq = 18104600L;     // probably should init these vars from the bandstack
 int step_ = 1000;
 int band = 5;
 int mode = 2;
-int step_timer;
+int bfo;
+
+int step_timer;                // allows double tap to backup the freq step to 500k , command times out
+                               // and returns to the normal double tap command ( volume )
+float af_gain = 0.5;
 
 
-/************************************************************************/
+/******************************** Teensy Audio Library **********************************/
+// Weaver mode receiver version 1
+
+#include <Audio.h>
+//#include <Wire.h>
+//#include <SPI.h>
+//#include <SD.h>
+//#include <SerialFlash.h>
+
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=175,597.5
+AudioFilterBiquad        I_filter;       //xy=246,528
+AudioFilterBiquad        Q_filter;       //xy=247,668
+AudioSynthWaveformSine   cosBFO;         //xy=419,608
+AudioSynthWaveformSine   sinBFO;         //xy=419,757
+AudioEffectMultiply      I_mixer;        //xy=507,537
+AudioEffectMultiply      Q_mixer;        //xy=511,675
+AudioMixer4              Add_Select;      //xy=707,600
+//AudioAnalyzeRMS          rms1;           //xy=900,528
+AudioOutputAnalog        dac1;           //xy=900,591.4286117553711
+AudioConnection          patchCord1(adcs1, 0, I_filter, 0);
+AudioConnection          patchCord2(adcs1, 1, Q_filter, 0);
+AudioConnection          patchCord3(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord4(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord5(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord6(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord7(I_mixer, 0, Add_Select, 1);
+AudioConnection          patchCord8(Q_mixer, 0, Add_Select, 2);
+//AudioConnection          patchCord9(Add_Select, rms1);
+AudioConnection          patchCord10(Add_Select, dac1);
+// GUItool: end automatically generated code
+
 
 /**************************************************************************/
 /*  I2C write only implementation using polling of the hardware registers */
@@ -402,6 +438,8 @@ void setup() {
    pinMode(EN_B,INPUT_PULLUP);
    pinMode(EN_SW,INPUT_PULLUP);
 
+   i2init();
+
    #ifdef USE_LCD
     LCD.InitLCD(contrast);
     LCD.setFont(SmallFont);
@@ -423,7 +461,53 @@ void setup() {
    
    fake_s();
 
+// Audio Library setup
+  AudioNoInterrupts();
+  AudioMemory(20);
+    // weaver audio
+  //Add_Select.gain(0,0.0);                   // AM off
+
+  set_af_gain();
+  set_Weaver_bandwidth(3000);
+  
+  AudioInterrupts();
+
 }
+
+void set_af_gain(){
+  
+  Add_Select.gain(1,af_gain);
+  Add_Select.gain(2,-af_gain);
+
+}
+
+void set_Weaver_bandwidth(int bandwidth){
+  
+  bfo = bandwidth/2;                     // weaver audio folding at 1/2 bandwidth
+  I_filter.setLowpass(0,bfo,0.51);       // filters are set to 1/2 the desired audio bandwidth
+  I_filter.setLowpass(1,bfo,0.60);       // with Butterworth Q's for 4 cascade
+  I_filter.setLowpass(2,bfo,0.90);
+  I_filter.setLowpass(3,bfo,2.56);
+
+  Q_filter.setLowpass(0,bfo,0.51);
+  Q_filter.setLowpass(1,bfo,0.60);
+  Q_filter.setLowpass(2,bfo,0.90);
+  Q_filter.setLowpass(3,bfo,2.56);
+
+  AudioNoInterrupts();                     // need so cos and sin start with correct phase
+
+    // complex BFO
+  cosBFO.amplitude(0.9);                   // what is correct bfo level, sig vs overload in adder
+  cosBFO.frequency(bfo);
+  cosBFO.phase(90);                        // cosine 
+  sinBFO.amplitude(0.9);
+  sinBFO.frequency(bfo);
+  sinBFO.phase(0);                         // sine
+
+  AudioInterrupts();
+  
+}
+
 
 void fake_s(){
 int i;
@@ -458,6 +542,7 @@ int t;
             qsy( freq + (t * step_ ));
             freq_display();
          }
+         if( encoder_user == VOLUME ) volume_adjust(t);
       }
 
       t = button_state(0);
@@ -480,7 +565,7 @@ void button_process( int t ){
            step_ /= 10;
            if( step_ == 500 ) step_ = 1000;
            if( step_ == 1 ) step_ = 1000;
-           step_timer = 10000;                  // 10 seconds to dtap up past 1000
+           step_timer = 3000;                  // 3 seconds to dtap up past 1000
            status_display();
         }
       break;
@@ -494,11 +579,58 @@ void button_process( int t ){
            if( step_ == 10000 ) step_ = 5000;
            status_display();
         }
-        // else volume 
+        // else volume toggle
+        else{
+            if( encoder_user == FREQ ) encoder_user = VOLUME, volume_adjust(0);
+            else{
+              volume_adjust(2);
+              encoder_user = FREQ, status_display();
+            }
+        }
       break;   
       case LONGPRESS: encoder_user = MENUS, top_menu(0);  break;
     }
     button_state(DONE);
+}
+
+
+void volume_adjust( int val ){
+
+   if( val == 0  ){     // first entry, clear status line
+   
+      #ifdef USE_LCD
+        LCD.print((char*)"Volume ",0,ROW0);
+        LCD.clrRow(0,6*7);
+      #endif
+      #ifdef USE_OLED
+        OLD.print((char*)"Volume ",0,ROW2);
+        OLD.clrRow(2,6*7);
+      #endif
+   }
+   if( val == 2 ){          // exit, clean up status line
+      #ifdef USE_LCD
+        LCD.clrRow(0);
+      #endif
+      #ifdef USE_OLED
+        OLD.clrRow(2);
+      #endif
+      return;    
+   }
+
+   if( af_gain > 1.0 ) val *= 2;                // bigger steps, crude log pot simulation
+   if( af_gain > 2.0 ) val *= 2;
+   af_gain = af_gain + ((float) val * 0.05);
+   af_gain = constrain(af_gain,0.0,3.0);
+   set_af_gain();
+
+   // 
+   #ifdef USE_LCD
+      LCD.printNumF(af_gain,2,6*7,ROW0);
+   #endif
+   #ifdef USE_OLED
+      OLD.printNumF(af_gain,2,6*7,ROW2);   
+   #endif
+  
 }
       
 void qsy( uint32_t f ){
