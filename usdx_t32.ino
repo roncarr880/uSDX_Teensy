@@ -12,8 +12,13 @@
  *     libraries are based on the same code from Rinky Dink Electronics.
  *     
  *     
+ * Change log:     
+ *    Version 1.0   Initial testing with a Weaver receiver.
+ *    Version 1.2   Added provision for AGC and AM detector.  Renamed some audio objects.
+ *    Version 1.21  New AM decoder.
  */
 
+#define VERSION 1.21
  // QCX pin definitions  to Teensy 3.2
 /* 
 #define LCD_D4  0         //PD0    (pin 2)      N/C
@@ -140,11 +145,13 @@ int bfo;
 
 int step_timer;                // allows double tap to backup the freq step to 500k , command times out
                                // and returns to the normal double tap command ( volume )
-float af_gain = 0.5;
-
+float af_gain = 0.3;
+float rf_gain = 1.0;           // above 1 perhaps not a good idea
+float sig_usb;                 // !!! maybe delete this temporary variable
 
 /******************************** Teensy Audio Library **********************************/
-// Weaver mode receiver version 1
+
+// new AM detector
 
 #include <Audio.h>
 //#include <Wire.h>
@@ -152,6 +159,146 @@ float af_gain = 0.5;
 //#include <SD.h>
 //#include <SerialFlash.h>
 
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=56.25,598.75
+AudioSynthWaveformSine   Osc10k;          //xy=78.57144927978516,825.7143230438232
+AudioAmplifier           amp1;           //xy=190,531.25
+AudioAmplifier           amp2;           //xy=191.25,670
+AudioEffectMultiply      FreqShift;      //xy=237.14286041259766,820.000002861023
+AudioFilterBiquad        Q_filter;       //xy=346.8214111328125,669.0714111328125
+AudioFilterBiquad        I_filter;       //xy=349.0357971191406,532.1072082519531
+AudioAnalyzePeak         peak1;          //xy=394.2857142857142,397.1428571428571
+AudioFilterBiquad        AM_HiPass;        //xy=402.8570861816406,820.0000286102295
+AudioSynthWaveformSine   cosBFO;         //xy=419,608
+AudioSynthWaveformSine   sinBFO;         //xy=419,757
+AudioEffectMultiply      I_mixer;        //xy=507,537
+AudioEffectMultiply      Q_mixer;        //xy=511,675
+AudioEffectRectifier     Detector;       //xy=554.2857513427734,821.4285564422607
+AudioAnalyzePeak         peak2;          //xy=598.5714073181152,398.5714359283447
+AudioMixer4              Sub_SSB;      //xy=707,600
+AudioFilterBiquad        AM_LoPass;        //xy=707.1427688598633,821.4285831451416
+AudioMixer4              Mode_Select;         //xy=715.5357513427734,732.6785659790039
+AudioAnalyzePeak         peak3;          //xy=811.4285163879395,401.4285125732422
+AudioAnalyzeRMS          rms1;           //xy=866.25,516.75
+AudioOutputAnalog        dac1;           //xy=885,710.1785888671875
+AudioConnection          patchCord1(adcs1, 0, amp1, 0);
+AudioConnection          patchCord2(adcs1, 0, peak1, 0);
+AudioConnection          patchCord3(adcs1, 1, amp2, 0);
+AudioConnection          patchCord4(Osc10k, 0, FreqShift, 1);
+AudioConnection          patchCord5(amp1, I_filter);
+AudioConnection          patchCord6(amp2, Q_filter);
+AudioConnection          patchCord7(FreqShift, AM_HiPass);
+AudioConnection          patchCord8(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord9(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord10(AM_HiPass, Detector);
+AudioConnection          patchCord11(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord12(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord13(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord14(I_mixer, peak2);
+AudioConnection          patchCord15(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord16(Detector, AM_LoPass);
+AudioConnection          patchCord17(Sub_SSB, rms1);
+AudioConnection          patchCord18(Sub_SSB, 0, Mode_Select, 0);
+AudioConnection          patchCord19(Sub_SSB, peak3);
+AudioConnection          patchCord20(Sub_SSB, 0, FreqShift, 0);
+AudioConnection          patchCord21(AM_LoPass, 0, Mode_Select, 3);
+AudioConnection          patchCord22(Mode_Select, dac1);
+// GUItool: end automatically generated code
+
+/*
+// testing version
+
+#include <Audio.h>
+//#include <Wire.h>
+//#include <SPI.h>
+//#include <SD.h>
+//#include <SerialFlash.h>
+
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=56.25,598.75
+AudioAmplifier           amp1;           //xy=190,531.25
+AudioAmplifier           amp2;           //xy=191.25,670
+AudioFilterBiquad        Q_filter;       //xy=346.8214111328125,669.0714111328125
+AudioFilterBiquad        I_filter;       //xy=349.0357971191406,532.1072082519531
+AudioAnalyzePeak         peak1;          //xy=394.2857142857142,397.1428571428571
+AudioSynthWaveformSine   cosBFO;         //xy=419,608
+AudioSynthWaveformSine   sinBFO;         //xy=419,757
+AudioEffectMultiply      I_mixer;        //xy=507,537
+AudioEffectMultiply      Q_mixer;        //xy=511,675
+AudioAnalyzePeak         peak2;          //xy=639.9999999999999,399.99999999999994
+AudioMixer4              Add_SSB;         //xy=699.9999961853027,495.71427726745605
+AudioMixer4              Sub_SSB;      //xy=707,600
+AudioMixer4              Mode_Select;         //xy=715.5357513427734,732.6785659790039
+AudioAnalyzeRMS          rms2;           //xy=863.75,462.5
+AudioAnalyzeRMS          rms1;           //xy=866.25,516.75
+AudioOutputAnalog        dac1;           //xy=885,710.1785888671875
+AudioAnalyzePeak         peak3;          //xy=925.714241027832,598.5714015960693
+AudioConnection          patchCord1(adcs1, 0, amp1, 0);
+AudioConnection          patchCord2(adcs1, 0, peak1, 0);
+AudioConnection          patchCord3(adcs1, 1, amp2, 0);
+AudioConnection          patchCord4(amp1, I_filter);
+AudioConnection          patchCord5(amp1, 0, Mode_Select, 3);
+AudioConnection          patchCord6(amp2, Q_filter);
+AudioConnection          patchCord7(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord8(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord9(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord10(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord11(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord12(I_mixer, 0, Add_SSB, 1);
+AudioConnection          patchCord13(I_mixer, peak2);
+AudioConnection          patchCord14(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord15(Q_mixer, 0, Add_SSB, 2);
+AudioConnection          patchCord16(Add_SSB, rms2);
+AudioConnection          patchCord17(Sub_SSB, rms1);
+AudioConnection          patchCord18(Sub_SSB, 0, Mode_Select, 0);
+AudioConnection          patchCord19(Sub_SSB, peak3);
+AudioConnection          patchCord20(Mode_Select, dac1);
+// GUItool: end automatically generated code
+*/
+
+// Weaver mode receiver version 2
+/*
+#include <Audio.h>
+//#include <Wire.h>
+//#include <SPI.h>
+//#include <SD.h>
+//#include <SerialFlash.h>
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=56.25,598.75
+AudioAmplifier           amp1;           //xy=190,531.25
+AudioAmplifier           amp2;           //xy=191.25,670
+AudioFilterBiquad        Q_filter;       //xy=346.8214111328125,669.0714111328125
+AudioFilterBiquad        I_filter;       //xy=349.0357971191406,532.1072082519531
+AudioSynthWaveformSine   cosBFO;         //xy=419,608
+AudioSynthWaveformSine   sinBFO;         //xy=419,757
+AudioEffectMultiply      I_mixer;        //xy=507,537
+AudioEffectMultiply      Q_mixer;        //xy=511,675
+AudioMixer4              Add_SSB;         //xy=699.9999961853027,495.71427726745605
+AudioMixer4              Sub_SSB;      //xy=707,600
+AudioMixer4              Mode_Select;         //xy=715.5357513427734,732.6785659790039
+AudioAnalyzeRMS          rms2;           //xy=863.75,462.5
+AudioAnalyzeRMS          rms1;           //xy=866.25,516.75
+AudioOutputAnalog        dac1;           //xy=885,710.1785888671875
+AudioConnection          patchCord1(adcs1, 0, amp1, 0);
+AudioConnection          patchCord2(adcs1, 1, amp2, 0);
+AudioConnection          patchCord3(amp1, I_filter);
+AudioConnection          patchCord4(amp1, 0, Mode_Select, 3);
+AudioConnection          patchCord5(amp2, Q_filter);
+AudioConnection          patchCord6(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord7(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord8(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord9(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord10(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord11(I_mixer, 0, Add_SSB, 1);
+AudioConnection          patchCord12(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord13(Q_mixer, 0, Add_SSB, 2);
+AudioConnection          patchCord14(Add_SSB, rms2);
+AudioConnection          patchCord15(Sub_SSB, rms1);
+AudioConnection          patchCord16(Sub_SSB, 0, Mode_Select, 0);
+AudioConnection          patchCord17(Mode_Select, dac1);
+// GUItool: end automatically generated code
+*/
+/* version 1
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=175,597.5
 AudioFilterBiquad        I_filter;       //xy=246,528
@@ -174,6 +321,8 @@ AudioConnection          patchCord8(Q_mixer, 0, Add_Select, 2);
 //AudioConnection          patchCord9(Add_Select, rms1);
 AudioConnection          patchCord10(Add_Select, dac1);
 // GUItool: end automatically generated code
+
+*/
 
 
 /**************************************************************************/
@@ -443,16 +592,16 @@ void setup() {
    #ifdef USE_LCD
     LCD.InitLCD(contrast);
     LCD.setFont(SmallFont);
-    LCD.print((char *)("Radio Active"),0,ROW5);    // just some junk to see on the screen
-    //LCD.print((char *)("USB"), 0,ROW0 );
+    LCD.print((char *)("Version "),0,ROW5);    // just some junk to see on the screen
+    LCD.printNumF(VERSION,2,6*8,ROW5);
    #endif
 
    #ifdef USE_OLED
      OLD.InitLCD();
      OLD.clrScr();
      OLD.setFont(SmallFont);
-     //OLD.print((char *)("USB"), 0,ROW2 );
-     OLD.print((char *)("Radio Active"),0,ROW7); 
+     OLD.print((char *)("Version "),0,ROW7);
+     OLD.printNumF(VERSION,2,6*8,ROW7);
    #endif
 
    freq_display();
@@ -460,44 +609,75 @@ void setup() {
    encoder();             // pick up current position
    
    fake_s();
+   qsy(freq);             // start Si5351
 
 // Audio Library setup
   AudioNoInterrupts();
   AudioMemory(20);
-    // weaver audio
-  //Add_Select.gain(0,0.0);                   // AM off
+  
+  Sub_SSB.gain(1,1.0);   // correct sideband
+  Sub_SSB.gain(2,-1.0);
 
   set_af_gain();
+  set_rf_gain(rf_gain);
   set_Weaver_bandwidth(3000);
+
+  // AM mode
+  Osc10k.frequency(10000);
+  Osc10k.amplitude(0.9);
+  AM_HiPass.setHighpass(0,11000, 0.51763809);
+  AM_HiPass.setHighpass(1,11000,0.70710678);
+  AM_HiPass.setHighpass(2,11000,1.9318517);
+  AM_HiPass.setNotch(3,10000,3.0);      // Q should be ?
+  AM_LoPass.setLowpass(0,4000,0.50979558);
+  AM_LoPass.setLowpass(1,4000,0.60134489);
+  AM_LoPass.setLowpass(2,4000,0.89997622);
+  AM_LoPass.setLowpass(3,4000,2.5629154);
   
   AudioInterrupts();
+
 
 }
 
 void set_af_gain(){
-  
-  Add_Select.gain(1,af_gain);
-  Add_Select.gain(2,-af_gain);
+
+  if( mode == AM ){
+     Mode_Select.gain(0,0.0);
+     Mode_Select.gain(3,2*af_gain);   // gain boost on AM
+  }
+  else{
+     Mode_Select.gain(3,0.0);
+     Mode_Select.gain(0,af_gain);
+  }
+//  Mode_Select.gain(0,af_gain);    // SSB
+//  Mode_Select.gain(3,0);          // AM
 
 }
+
+void set_rf_gain(float g ){
+
+  amp1.gain(g);
+  amp2.gain(g);
+}
+
 
 void set_Weaver_bandwidth(int bandwidth){
   
   bfo = bandwidth/2;                     // weaver audio folding at 1/2 bandwidth
-  I_filter.setLowpass(0,bfo,0.51);       // filters are set to 1/2 the desired audio bandwidth
-  I_filter.setLowpass(1,bfo,0.60);       // with Butterworth Q's for 4 cascade
-  I_filter.setLowpass(2,bfo,0.90);
-  I_filter.setLowpass(3,bfo,2.56);
+  I_filter.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
+  I_filter.setLowpass(1,bfo,0.60134489);       // with Butterworth Q's for 4 cascade
+  I_filter.setLowpass(2,bfo,0.89997622);
+  I_filter.setLowpass(3,bfo,2.5629154);
 
-  Q_filter.setLowpass(0,bfo,0.51);
-  Q_filter.setLowpass(1,bfo,0.60);
-  Q_filter.setLowpass(2,bfo,0.90);
-  Q_filter.setLowpass(3,bfo,2.56);
+  Q_filter.setLowpass(0,bfo,0.50979558);
+  Q_filter.setLowpass(1,bfo,0.60134489);
+  Q_filter.setLowpass(2,bfo,0.89997622);
+  Q_filter.setLowpass(3,bfo,2.5629154);
 
   AudioNoInterrupts();                     // need so cos and sin start with correct phase
 
     // complex BFO
-  cosBFO.amplitude(0.9);                   // what is correct bfo level, sig vs overload in adder
+  cosBFO.amplitude(0.9);                   // amplitude 1.0 causes distortion ?
   cosBFO.frequency(bfo);
   cosBFO.phase(90);                        // cosine 
   sinBFO.amplitude(0.9);
@@ -526,6 +706,7 @@ int i;
 
 void loop() {
 static uint32_t tm;
+static int t2;            // distribute some processing
 int t;  
 
    i2poll();
@@ -533,7 +714,7 @@ int t;
    //  1 ms routines
    if( tm != millis()){ 
       tm = millis();
-      if( step_timer ) --step_timer;       // dtap step up to 1M 
+      if( step_timer ) --step_timer;       // dtap step up to 500k enable 
       
       t = encoder();
       if( t ){
@@ -547,9 +728,57 @@ int t;
 
       t = button_state(0);
       if( t > DONE ) button_process(t);
+
+      // agc
+      if( rms1.available() ) t2 = 3;          // flag to process on a different time tick
+
+      // testing
+      report_peaks();
+   }
+
+   if( t2 ){
+     --t2;
+     if( t2 == 1 ){
+        sig_usb = rms1.read();
+        agc_process( sig_usb);
+     }
+    // if( t2 == 0 && mode == AM ) aft_process();
    }
    
 }
+
+void report_peaks(){
+static int count;
+
+  if( ++count < 1000 ) return;            // once a second
+  if( encoder_user != FREQ ) return;
+  count = 0;
+
+  LCD.print((char *)"Adc ",0,ROW3);
+  LCD.print((char *)"Mix ",0,ROW4);
+  LCD.print((char *)"Add ",0,ROW5);
+  LCD.printNumF( peak1.read(),2,4*6,ROW3);
+  LCD.printNumF( peak2.read(),2,4*6,ROW4);
+  LCD.printNumF( peak3.read(),2,4*6,ROW5);
+}
+
+/*
+void aft_process(){      // signal capture in AM mode for syncrodyne detection
+static int t;
+static int aft;
+int ch;
+
+  return;    // doesn't work
+  
+   if( ++t < 100 ) return;    // avoid this process producing audio artifacts
+   t = 0;   ch = 0;
+   if( sig_usb > sig_lsb + 0.05 ) --aft, ch = 1;
+   if( sig_lsb > sig_usb + 0.05 ) ++aft, ch = 1;
+   aft = constrain( aft,-200,200 );
+
+   if( ch ) qsy( freq + aft );
+}
+*/
 
 void button_process( int t ){
 
@@ -698,7 +927,9 @@ void band_change( int to_band ){
   band = to_band;
   mode = bandstack[band].mode;
   step_ = bandstack[band].stp;
-  qsy( bandstack[band].freq );
+  freq = bandstack[band].freq;
+  mode_change(mode);
+//  qsy( bandstack[band].freq );
 //  status_display();            delay until after screen clear
   
 }
@@ -707,7 +938,17 @@ void mode_change( int to_mode ){
 
   mode = to_mode;
   qsy( freq );            // to get phasing correct
- // status_display();     delay writes to screen
+  set_af_gain();
+  if( mode == AM ){
+    // Mode_Select.gain(0,0.0);
+    // Mode_Select.gain(3,af_gain);
+    set_Weaver_bandwidth(5000);    
+  }
+  else{
+    // Mode_Select.gain(3,0.0);
+    // Mode_Select.gain(0,af_gain);
+    set_Weaver_bandwidth(3000);
+  }
 }
 
 
@@ -743,6 +984,34 @@ int rem;
     OLD.printNumI(rem,9*12,ROW1,3,'0');
    #endif
 }
+
+
+#define AGC_FLOOR  0.035             // was 0.07
+#define AGC_SLOPE  0.8             // was .8
+#define AGC_HANG   300             // ms
+void agc_process( float reading ){
+static float sig = AGC_FLOOR;
+static int hang;
+float g;
+int ch;                            // flag change needed
+
+    ch = 0;
+    reading *= AGC_SLOPE;
+    
+    if( reading > sig && reading > AGC_FLOOR ){       // attack
+       sig += 0.001,  hang = 0, ch = 1;
+    }
+    else if( sig > AGC_FLOOR && hang++ > AGC_HANG ){  // decay
+       sig -= 0.00005, ch = 1;
+    }
+
+    if( ch ){                                         // change needed
+            OLD.printNumF( sig,2,0,ROW6 );            // debug
+       g = 1.0 - sig + AGC_FLOOR;
+       set_rf_gain( g * rf_gain );                    // front end gain.  Only manual rf_gain can increase it.
+    }                                                 // AGC can only decrease it.
+                                                      // may have to adjust FLOOR with manual rf_gain changes.
+}                                                     // see how this works first.
 
 
 int encoder(){         /* read encoder, return 1, 0, or -1 */
