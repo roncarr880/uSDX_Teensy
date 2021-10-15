@@ -22,14 +22,15 @@
  *                  this problem.  Not sure I know what I am talking about here. 
  *    Version 1.33  Design changes with transmitting in mind.  Abandoning AM mode.              
  *    Version 1.34  Back to a Weaver decoder with FIR front end filters.  Then back to Bi-quads. 
- *    Version 1.35  Complete audio design.   USB objects commented out for now. Still need to cut VUSB etch on the Teensy 3.2
+ *    Version 1.35  Completed audio design.   USB objects commented out for now. Still need to cut VUSB etch on the Teensy 3.2
+ *    Version 1.36  Changed I2C to a non-blocking DMA driven ( or ISR ) library i2c_t3.  My polling code commented out.  
+ *                  This required changing the 7 audio library .ccp control files to use i2c_t3 instead of Wire to correct link errors.
+ *                  A Teensyduino update will remove these changes ( duplicate wire definitions result ).  Also edited i2c_t3.h to
+ *                  allow only 1 I2C bus to run.  This is a user option as noted in the file.
  *    
  */
 
-#define VERSION 1.35
-
-//#include <avr/io.h>
-//#include <avr/interrupt.h>
+#define VERSION 1.36
 
 /*
  * The encoder switch works like this:
@@ -90,8 +91,8 @@
 #ifdef USE_OLED 
  #include <OLED1306_Basic.h>
 #endif
-#include <Wire.h>       // use wire library code to set up Pin Mux registers for I2C pins.
-                        // all else using non-blocking routines here.
+
+#include <i2c_t3.h>      // non-blocking wire library ( although only one large buffer )
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -181,8 +182,100 @@ float sig_usb;
 //#include <SD.h>
 //#include <SerialFlash.h>
 
-// Weaver with bi-quads.  Tx sources, USB added.
+// Weaver with bi-quads.  Tx sources, USB added.  Separate AGC amp removed.
 
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=74.28574752807617,447.1429252624512
+//AudioInputUSB            usb2;           //xy=78.57145690917969,510.0000228881836
+AudioAnalyzePeak         peak1;          //xy=244.4285888671875,292.0000305175781
+AudioMixer4              RxTx1;         //xy=264.2857246398926,370.00003719329834
+AudioMixer4              RxTx2;         //xy=267.14288330078125,541.428599357605
+AudioFilterBiquad        I_filter;        //xy=400.8928756713867,391.2500104904175
+AudioAnalyzePeak         peak2;          //xy=403,295
+AudioFilterBiquad        Q_filter;        //xy=404.6428756713867,525.0000104904175
+AudioSynthWaveformSine   cosBFO;         //xy=503.00000381469727,440.00002098083496
+AudioSynthWaveformSine   sinBFO;         //xy=507.28575897216797,487.5713748931885
+AudioEffectMultiply      I_mixer;        //xy=606.7143173217773,396.14284896850586
+AudioEffectMultiply      Q_mixer;        //xy=610.7143096923828,532.7142696380615
+AudioMixer4              MysteryObject;         //xy=618.5715065002441,611.4285755157471
+AudioMixer4              Sub_SSB;        //xy=745.2857513427734,452.00001430511475
+AudioAnalyzeRMS          rms1;           //xy=865.7143783569336,362.28568840026855
+AudioAmplifier           Volume;           //xy=890.0000457763672,452.8572006225586
+//AudioOutputUSB           usb1;           //xy=1031.4286308288574,502.8572196960449
+AudioOutputAnalog        dac1;           //xy=1036.1427917480469,452.00001335144043
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
+AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord4(adcs1, 0, peak1, 0);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord8(RxTx1, I_filter);
+AudioConnection          patchCord9(RxTx1, peak2);
+AudioConnection          patchCord10(RxTx2, Q_filter);
+AudioConnection          patchCord11(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord12(I_filter, 0, MysteryObject, 0);
+AudioConnection          patchCord13(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord14(Q_filter, 0, MysteryObject, 1);
+AudioConnection          patchCord15(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord16(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord17(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord18(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord19(Sub_SSB, Volume);
+AudioConnection          patchCord20(Sub_SSB, rms1);
+AudioConnection          patchCord21(Volume, dac1);
+//AudioConnection          patchCord22(Volume, 0, usb1, 0);
+//AudioConnection          patchCord23(Volume, 0, usb1, 1);
+// GUItool: end automatically generated code
+
+/*
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=74.28574752807617,447.1429252624512
+//AudioInputUSB            usb2;           //xy=78.57145690917969,510.0000228881836
+AudioAnalyzePeak         peak1;          //xy=244.4285888671875,292.0000305175781
+AudioMixer4              RxTx1;         //xy=264.2857246398926,370.00003719329834
+AudioMixer4              RxTx2;         //xy=267.14288330078125,541.428599357605
+AudioFilterBiquad        I_filter;        //xy=400.8928756713867,391.2500104904175
+AudioAnalyzePeak         peak2;          //xy=403,295
+AudioFilterBiquad        Q_filter;        //xy=404.6428756713867,525.0000104904175
+AudioSynthWaveformSine   cosBFO;         //xy=513,437.1428737640381
+AudioSynthWaveformSine   sinBFO;         //xy=515.8572044372559,480.42853832244873
+AudioEffectMultiply      I_mixer;        //xy=606.7143096923828,389.0000104904175
+AudioEffectMultiply      Q_mixer;        //xy=610.7143096923828,527.0000104904175
+AudioMixer4              MysteryObject;         //xy=618.5715065002441,611.4285755157471
+AudioMixer4              Sub_SSB;        //xy=745.2857513427734,452.00001430511475
+AudioAmplifier           Volume;           //xy=838.5714836120605,562.8571844100952
+AudioAmplifier           agc_amp;           //xy=918.571418762207,452.8571481704712
+AudioAnalyzeRMS          rms1;           //xy=965.7143096923828,368.0000104904175
+AudioOutputAnalog        dac1;           //xy=984.7143096923828,562.0000104904175
+//AudioOutputUSB           usb1;           //xy=990.0000228881836,604.2857370376587
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
+AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord4(adcs1, 0, peak1, 0);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord8(RxTx1, I_filter);
+AudioConnection          patchCord9(RxTx1, peak2);
+AudioConnection          patchCord10(RxTx2, Q_filter);
+AudioConnection          patchCord11(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord12(I_filter, 0, MysteryObject, 0);
+AudioConnection          patchCord13(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord14(Q_filter, 0, MysteryObject, 1);
+AudioConnection          patchCord15(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord16(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord17(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord18(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord19(Sub_SSB, agc_amp);
+AudioConnection          patchCord20(Volume, dac1);
+//AudioConnection          patchCord21(Volume, 0, usb1, 0);
+//AudioConnection          patchCord22(Volume, 0, usb1, 1);
+AudioConnection          patchCord23(agc_amp, Volume);
+AudioConnection          patchCord24(agc_amp, rms1);
+// GUItool: end automatically generated code
+*/
+/*
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=74.28574752807617,447.1429252624512
 //AudioInputUSB            usb2;           //xy=78.57145690917969,510.0000228881836
@@ -226,7 +319,7 @@ AudioConnection          patchCord19(Volume, dac1);
 AudioConnection          patchCord22(agc_amp, Volume);
 AudioConnection          patchCord23(agc_amp, rms1);
 // GUItool: end automatically generated code
-
+*/
 /*   weaver with biquads
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=118.5714340209961,450
@@ -334,108 +427,32 @@ AudioConnection          patchCord18(BandWidth, dac1);
 // GUItool: end automatically generated code
 
 */
-/**************************************************************************/
-/*  I2C write only implementation using polling of the hardware registers */
-/*  Teensy 3.2 version  */
-/*  most functions do not block */
-/*  call i2poll() in loop() to keep everything going */
 
-/*
-ISR (TWI_vect){
-  i2poll();
- // if( gi2state == 0 ) i2poll();   // needed to get out of state zero, else double ints
- // ++ints;
-}*/
-
-
-// use some upper bits in the buffer for control
-#define ISTART 0x100
-#define ISTOP  0x200
-#define I2BUFSIZE 256      
-uint16_t i2buf[I2BUFSIZE];
-int i2in, i2out;
-
+// I2C functions that the OLED library expects to use.
 void i2init(){
-    // start up our local I2C routines
-  Wire.begin();              // this seems to be the easiest way to get the Pin Mux assigned
-  Wire.setClock(400000);     // I2C0_F  40 = 100k ,  25 = 400k.  Library only loads standard speeds I think.
-  //I2C0_F = 15;             // override standard speeds    
+
+  Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR ?, dma takes a long time to reset the OLED. Both seem to work.
+  Wire.setClock(700000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
+                             // clock stretching may produce reduced speed if clock is way to fast for the devices.
+                             // may need a speed test or scope the scl sda to see what is really going on.
+                             // Calc that 700k speed could maybe support a tx bandwidth of 5.5k at 11029 sample rate.
 }
 
 void i2start( unsigned char adr ){
-unsigned int dat;
-  // shift the address over and add the start flag
-  dat = ( adr << 1 ) | ISTART;
-  i2send( dat );
+
+  while( Wire.done() == 0 );      // still busy with last.  Need to block while still busy???.  Did we gain anything from std Wire?
+  Wire.beginTransmission( adr );
+
 }
 
-void i2send( unsigned int data ){   // just save stuff in the buffer
-int next;
+void i2send( unsigned int data ){ 
 
-  next = (i2in + 1) & (I2BUFSIZE - 1);
-  while( i2out == next ) i2poll();
-  i2buf[i2in++] = data;
-  i2in &= (I2BUFSIZE - 1);
-  //i2poll();   // !!! did this cause an error?
+  Wire.write( data );
 }
 
 void i2stop( ){
-   i2send( ISTOP );   // que a stop condition
-}
-
-
-void i2flush(){  //  call poll to empty out the buffer.  This one does block.
-
-  while( i2poll() ); 
-}
-
-int i2poll(){    // everything happens here.  Call this from loop.
-static int state = 0;
-static int data;
-   
-   switch( state ){    
-      case 0:      // idle state or between characters
-        if( i2in != i2out ){   // get next character
-           data = i2buf[i2out++];
-           i2out &= (I2BUFSIZE - 1 );
-           
-           if( data & ISTART ){   // start
-              data &= 0xff;
-              // set start condition
-              I2C0_C1 = 0xB0;      // enabled, master, TX
-              state = 1; 
-           }
-           else if( data & ISTOP ){  // stop
-              // set stop condition
-              I2C0_C1 = 0x90;         // clear master, enabled and tx set
-              state = 3;
-           }
-           else{   // just data to send
-              I2C0_D = data;
-              state = 2;
-           }
-        }
-      break; 
-      case 1:  // wait for bus busy (start done), send saved data which has the address
-         if( (I2C0_S & 0x20) ){    // test busy bit
-            state = 2;
-            I2C0_D = data;
-         }
-      break;
-      case 2:  // wait for transfer complete, blind to success or fail
-         if( (I2C0_S & 0x80 ) ){  
-            state = 0;
-         }
-      break;
-      case 3:  // wait for stop, busy clear
-         if( (I2C0_S & 0x20 ) == 0 ){
-            state = 0;
-         }
-      break;    
-   }
-   
-   if( i2in != i2out ) return (state + 8);
-   else return state;
+  Wire.sendTransmission();     // non-blocking
+ // Wire.endTransmission();      // blocking
 }
 
 
@@ -472,7 +489,8 @@ public:
 
   #define FAST __attribute__((optimize("Ofast")))
 
-  #define F_XTAL 27005200            // Crystal freq in Hz, nominal frequency 27004300
+  #define F_XTAL 27005000            // Crystal freq in Hz, nominal frequency 27004300
+                                     // seems it needs to be set higher than normal
   //#define F_XTAL 25004000          // Alternate SI clock
   //#define F_XTAL 20004000          // A shared-single 20MHz processor/pll clock
   volatile uint32_t fxtal = F_XTAL;
@@ -523,8 +541,9 @@ public:
     i2stop();                       //i2c.stop();      
   }
   void SendRegister(uint8_t reg, uint8_t val){ SendRegister(reg, &val, 1); }
+  
   int16_t iqmsa; // to detect a need for a PLL reset
-
+  
   void freq(uint32_t fout, uint8_t i, uint8_t q){  // Set a CLK0,1 to fout Hz with phase i, q
       uint8_t msa; uint32_t msb, msc, msp1, msp2, msp3p2;
       uint8_t rdiv = 0;             // CLK pin sees fout/(2^rdiv)
@@ -556,18 +575,18 @@ public:
       SendRegister(42+0*8, ms_regs, 8); // Write to MS0
       SendRegister(42+1*8, ms_regs, 8); // Write to MS1
       SendRegister(42+2*8, ms_regs, 8); // Write to MS2
-      SendRegister(16+0, 0x0C|0|0x00);  // CLK0: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
-      SendRegister(16+1, 0x0C|0|0x00);  // CLK1: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
-      SendRegister(16+2, 0x2C|0|0x00);  // CLK2: 0x2C=PLLB local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
+      SendRegister(16+0, 0x0C|3|0x00);  // CLK0: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
+      SendRegister(16+1, 0x0C|3|0x00);  // CLK1: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
+      SendRegister(16+2, 0x2C|3|0x00);  // CLK2: 0x2C=PLLB local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
       SendRegister(165, i * msa / 90);  // CLK0: I-phase (on change -> Reset PLL)
       SendRegister(166, q * msa / 90);  // CLK1: Q-phase (on change -> Reset PLL)
       if(iqmsa != ((i-q)*msa/90)){ iqmsa = (i-q)*msa/90; SendRegister(177, 0xA0); } // 0x20 reset PLLA; 0x80 reset PLLB
       SendRegister(3, 0b11111100);      // Enable/disable clock
 
-  Serial.print( fout ); Serial.write(' ');
-  Serial.print( fvcoa ); Serial.write(' ');
-  Serial.print( iqmsa );  Serial.write(' ');
-  Serial.println(d);
+  //Serial.print( fout ); Serial.write(' ');
+  //Serial.print( fvcoa ); Serial.write(' ');
+  //Serial.print( iqmsa );  Serial.write(' ');
+  //Serial.println(d);
 
       _fout = fout;  // cache
       _div = d;
@@ -592,7 +611,7 @@ public:
     for(int addr = 16; addr != 24; addr++) SendRegister(addr, 0b10000000);  // Conserve power when output is disabled
     SendRegister(3, 0b11111111); // Disable all CLK outputs    
   }
-  #define SI_CLK_OE 3     // ??
+  #define SI_CLK_OE 3 
 
 };
 static SI5351 si5351;
@@ -624,13 +643,14 @@ void setup() {
      OLD.setFont(SmallFont);
      OLD.print((char *)("Version "),0,ROW7);
      OLD.printNumF(VERSION,2,6*8,ROW7);
+     OLD.printNumI( Wire.getClock()/1000,0,ROW4);
    #endif
 
    freq_display();
    status_display();
    encoder();             // pick up current position
    
-   fake_s();
+  fake_s();
 
 // Audio Library setup
   AudioNoInterrupts();
@@ -638,9 +658,17 @@ void setup() {
   
   Sub_SSB.gain(1,1.0);   // correct sideband
   Sub_SSB.gain(2,-1.0);
+  Sub_SSB.gain(0,0.0);
+  Sub_SSB.gain(3,0.0);
 
-  RxTx1.gain(0,1.0);
+  RxTx1.gain(0,1.0);     // audio mux's
   RxTx2.gain(0,1.0);     // Rx = 0, Tx mic = 1, Tx usb = 2
+  RxTx1.gain(1,0.0);
+  RxTx1.gain(2,0.0);
+  RxTx1.gain(3,0.0);
+  RxTx2.gain(1,0.0);
+  RxTx2.gain(2,0.0);
+  RxTx2.gain(3,0.0);
  
 
   set_af_gain(af_gain);
@@ -650,8 +678,9 @@ void setup() {
 //  I_filter.begin(fir3k,30);    // min phase kaiser 3k
 //  Q_filter.begin(fir3k,30);
 
-  set_Weaver_bandwidth(3300);
+  // set_Weaver_bandwidth(3300);
   filter = 4;
+  set_rx_bandwidth();
 
   AudioInterrupts();
 
@@ -686,12 +715,17 @@ void set_af_gain(float g){
 }
 
 void set_agc_gain(float g ){
-
-  agc_amp.gain(g);
+   // try front end gain agc again
+   // agc_amp.gain(g);
+   //agc_amp.gain(1.0);
+  noInterrupts();
+    RxTx1.gain(0,g);     // audio mux's
+    RxTx2.gain(0,g);     // Rx = 0, Tx mic = 1, Tx usb = 2
+  interrupts();
 }
 
 
-
+/*
 void set_Weaver_bandwidth(int bandwidth){
   
   bfo = bandwidth/2;                           // weaver audio folding at 1/2 bandwidth
@@ -717,7 +751,73 @@ void set_Weaver_bandwidth(int bandwidth){
 
   AudioInterrupts();
   qsy(freq);             // refresh Si5351 to new vfo frequency after weaver bandwidth changes
+                      
+}
+*/
 
+
+void set_tx_bandwidth(){   // some duplicate code to just mess with the filters and not the BFO
+                           // the tx filters need to pass the full bandwidth and not just half as in RX mode.
+
+  I_filter.setLowpass(0,2700,0.50979558);       // Fixed 3db down at 2700 for TX
+  I_filter.setLowpass(1,2700,0.60134489);       // Butterworth Q's for 4 cascade
+  I_filter.setLowpass(2,2700,0.89997622);
+  I_filter.setLowpass(3,2700,2.5629154);
+
+  Q_filter.setLowpass(0,2700,0.50979558);
+  Q_filter.setLowpass(1,2700,0.60134489);
+  Q_filter.setLowpass(2,2700,0.89997622);
+  Q_filter.setLowpass(3,2700,2.5629154);  
+}
+
+void set_rx_bandwidth(){             // restore receive bandwidth after TX
+int bw;                              // or bandwidth changed in menu's.
+
+   bw = 3300;                        // remove warning uninitialized variable
+   switch( filter ){
+       case 0: bw = 1000; break;     // data duplicated from menu strings.  Could be improved so that
+       case 1: bw = 1500; break;     // one doesn't need to maintain data in two places if changes are made.
+       case 2: bw = 2700; break;
+       case 3: bw = 3000; break;
+       case 4: bw = 3300; break;
+   }
+
+  bfo = bw/2;                           // weaver audio folding at 1/2 bandwidth
+  
+  I_filter.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
+  I_filter.setLowpass(1,bfo,0.60134489);       // with Butterworth Q's for 4 cascade
+  I_filter.setLowpass(2,bfo,0.89997622);
+  I_filter.setLowpass(3,bfo,2.5629154);
+
+  Q_filter.setLowpass(0,bfo,0.50979558);
+  Q_filter.setLowpass(1,bfo,0.60134489);
+  Q_filter.setLowpass(2,bfo,0.89997622);
+  Q_filter.setLowpass(3,bfo,2.5629154);
+
+  AudioNoInterrupts();                     // need so cos and sin start with correct phase
+
+    // complex BFO
+  cosBFO.amplitude(0.9);                   // amplitude 1.0 causes distortion ?
+  cosBFO.frequency(bfo);
+  cosBFO.phase(90);                        // cosine 
+  sinBFO.amplitude(0.9);
+  sinBFO.frequency(bfo);
+  sinBFO.phase(0);                         // sine
+
+  AudioInterrupts();
+  qsy(freq);             // refresh Si5351 to new vfo frequency after weaver bandwidth changes  
+}
+
+
+void tx(){
+  // what needs to change to enter tx mode
+  // audio mux switching, tx bandwidth, pwm, SI5351 clocks on/off, I2C speed change, ...
+  
+}
+
+void rx(){
+  // what needs to change to return to rx mode.
+  
 }
 
 
@@ -736,12 +836,13 @@ int i;
   }  
 }
 
+
 void loop() {
 static uint32_t tm;
 static int t2;            // distribute some processing
 int t;  
 
-   i2poll();
+   // i2poll();
 
    //  1 ms routines
    if( tm != millis()){ 
@@ -797,8 +898,10 @@ static int count;
   LCD.printNumF( peak2.read(),2,4*6,ROW4);
   LCD.printNumF( peak3.read(),2,4*6,ROW5);
   */
-    LCD.print((char *)"Adc ",0,ROW4);
+   LCD.print((char *)"Adc ",0,ROW4);
    LCD.printNumF( peak1.read(),2,4*6,ROW4);
+   LCD.print((char *)"Sel ",0,ROW5);
+   LCD.printNumF( peak2.read(),2,4*6,ROW5);
 }
 
 
@@ -887,15 +990,16 @@ void volume_adjust( int val ){
       
 void qsy( uint32_t f ){
 static int cw_offset = 700;     // !!! make global ?, add to menu if want to change on the fly
-  
+
+    // with weaver rx, freq is the display frequency.  vfo and bfo move about with bandwidth changes.
     freq = f;
     //    noInterrupts();
     if(mode == CW){
-      si5351.freq(freq - cw_offset, 0, 90);  // RX in USB
-      si5351.freq_calc_fast(cw_offset); si5351.SendPLLBRegisterBulk(); // TX at freq
+      si5351.freq(freq + cw_offset - bfo, 90, 0);  // RX in LSB
+      si5351.freq_calc_fast(-cw_offset + bfo); si5351.SendPLLBRegisterBulk(); // TX at freq
     }
-    else if(mode == LSB) si5351.freq(freq, 90, 0);  // RX in LSB
-    else si5351.freq(freq, 0, 90);  // RX in USB, AM
+    else if(mode == LSB) si5351.freq(freq - bfo, 90, 0);  // RX in LSB
+    else si5351.freq(freq + bfo, 0, 90);  // RX in USB, AM
     //interrupts();
     
     //freq_display();     // need to delay screen update until after menu_cleanup
@@ -961,7 +1065,7 @@ void mode_change( int to_mode ){
 
   mode = to_mode;
   qsy( freq );            // to get phasing correct
-  set_af_gain(af_gain);
+  // set_af_gain(af_gain);   not needed unless we put the mode volume mux back in the code. Once needed for AM mode.
 }
 
 
@@ -1126,7 +1230,7 @@ static int state;      // where we are in the selection process
 static struct  MENU *active_menu;  // menu pointer so can have common code for all menu's
 static int def_val;    // current default value in selection process
 
-int ret_val,bw;
+int ret_val;
 
    ret_val = 1;   // assume we are still busy
 
@@ -1161,15 +1265,9 @@ int ret_val,bw;
             ret_val = state = 0; 
          break;   // mode change
          case 3:
-            switch( def_val ){
-              case 0: bw = 1000; break;
-              case 1: bw = 1500; break;
-              case 2: bw = 2700; break;
-              case 3: bw = 3000; break;
-              case 4: bw = 3300; break;
-            }
             filter = def_val;
-            set_Weaver_bandwidth( bw );
+            set_rx_bandwidth();
+           // set_Weaver_bandwidth( bw );
             ret_val = state = 0;
          break;
          //default:  state = 0; ret_val = 0; break;  // temp
@@ -1262,3 +1360,127 @@ static int base;
    #endif
 
 }
+
+
+#ifdef NOWAY
+/***********************   saving some old code
+
+/**************************************************************************/
+/*  I2C write only implementation using polling of the hardware registers */
+/*  Teensy 3.2 version  */
+/*  most functions do not block */
+/*  call i2poll() in loop() to keep everything going */
+
+
+// use some upper bits in the buffer for control
+/*
+#define ISTART 0x100
+#define ISTOP  0x200
+#define I2BUFSIZE 256      
+uint16_t i2buf[I2BUFSIZE];
+int i2in, i2out;
+*/
+/*
+void i2init(){
+    // start up our local I2C routines
+  Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR ?, dma takes a long time to reset the OLED. Both seem to work.
+  Wire.setClock(600000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
+                             // clock stretching may produce reduced speed if clock is way to fast for the devices.
+                             // may need a speed test or scope the scl sda to see what is really going on.
+  //I2C0_F = 15;             // override standard speeds?  Now using i2c_t3 library, it supports non-standard speeds 
+}
+
+void i2start( unsigned char adr ){
+
+  while( Wire.done() == 0 );      // still busy with last.  Need to block while still busy???.  Did we gain anything from std Wire?
+  Wire.beginTransmission( adr );
+
+  // could double buffer and use the callback ( Wire.onTransmitDone(function); ) to send the next set of buffered data up to 
+  // the next stop.  But it seems that could be tricky when buffers empty and callback has nothing to do, or when the buffer fills.
+  /*
+unsigned int dat;
+  // shift the address over and add the start flag
+  dat = ( adr << 1 ) | ISTART;
+  i2send( dat ); */
+/* }*/
+/*
+void i2send( unsigned int data ){   // just save stuff in the buffer
+//int next;
+
+  Wire.write( data );
+  */
+/*
+  next = (i2in + 1) & (I2BUFSIZE - 1);
+  while( i2out == next ) i2poll();
+  i2buf[i2in++] = data;
+  i2in &= (I2BUFSIZE - 1);
+  //i2poll();   // !!! did this cause an error?
+  
+}
+
+/*
+void i2stop( ){
+  Wire.sendTransmission();     // non-blocking
+ // Wire.endTransmission();      // blocking
+  // i2send( ISTOP );   // que a stop condition
+}*/
+
+/*
+void i2flush(){  //  call poll to empty out the buffer.  This one does block.
+
+  while( i2poll() ); 
+}
+
+// save this, might be only copy of these direct to hardware Teensy I2C routines.
+int i2poll(){    // everything happens here.  Call this from loop.
+static int state = 0;
+static int data;
+   
+   switch( state ){    
+      case 0:      // idle state or between characters
+        if( i2in != i2out ){   // get next character
+           data = i2buf[i2out++];
+           i2out &= (I2BUFSIZE - 1 );
+           
+           if( data & ISTART ){   // start
+              data &= 0xff;
+              // set start condition
+              I2C0_C1 = 0xB0;      // enabled, master, TX
+              state = 1; 
+           }
+           else if( data & ISTOP ){  // stop
+              // set stop condition
+              I2C0_C1 = 0x90;         // clear master, enabled and tx set
+              state = 3;
+           }
+           else{   // just data to send
+              I2C0_D = data;
+              state = 2;
+           }
+        }
+      break; 
+      case 1:  // wait for bus busy (start done), send saved data which has the address
+         if( (I2C0_S & 0x20) ){    // test busy bit
+            state = 2;
+            I2C0_D = data;
+         }
+      break;
+      case 2:  // wait for transfer complete, blind to success or fail
+         if( (I2C0_S & 0x80 ) ){  
+            state = 0;
+         }
+      break;
+      case 3:  // wait for stop, busy clear
+         if( (I2C0_S & 0x20 ) == 0 ){
+            state = 0;
+         }
+      break;    
+   }
+   
+   if( i2in != i2out ) return (state + 8);
+   else return state;
+}
+*/
+
+#endif
+ 
