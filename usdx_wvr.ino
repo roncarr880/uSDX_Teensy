@@ -17,9 +17,9 @@
  *    Version 1.2   Added provision for AGC and AM detector.  Renamed some audio objects.
  *    Version 1.21  New AM decoder.
  *    Version 1.3   Baseband phasing version.  I think this version will have more reusable audio objects when transmitting.
- *    Version 1.31  Mode Select object gets the volume control out of the AGC loop.
+ *    Version 1.31  Adding Mode Select object gets the volume control out of the AGC loop.
  *    Version 1.32  Moved AGC amps out of the phasing path as it degraded the audio image suppression.  The Weaver version also has
- *                  this problem.  Not sure I know what I am talking about here. 
+ *                  this problem.  Not sure I know what I am talking about here.  Figured it out, mixer default gain is 1, not zero.
  *    Version 1.33  Design changes with transmitting in mind.  Abandoning AM mode.              
  *    Version 1.34  Back to a Weaver decoder with FIR front end filters.  Then back to Bi-quads. 
  *    Version 1.35  Completed audio design.   USB objects commented out for now. Still need to cut VUSB etch on the Teensy 3.2
@@ -29,6 +29,28 @@
  *                  allow only 1 I2C bus to run.  This is a user option as noted in the file.
  *    
  */
+
+ /*
+  * peak magnitude estimation ( derek rowell )
+  *   0.960433870103 * maxIQ + 0.3978247347593 * minIQ
+  *   Testing
+  *   sqrt ( 12*12 + 7*7 ) is 13.892
+  *   0.9604 * 12 + 0.3978 * 7 is 14.3
+  *   Q15 version: 31470 * 12  +  13035 * 7   =  468,885 then shift by 15 = 14 ( 1110 )
+  *   
+  *   QCX-SSB method:  maxIQ + 1/4 minIQ
+  *   12 + 7/4 = 13
+  *   bigger numbers
+  *      314  223    sqrt --> 385
+  *      314 + 223/4 = 369
+  *  Q15             = 390
+  *      314 + 223/4 + 223/8 = 397
+  *      314 - 314/32 + 223/4 + 223/8 = 387
+  *      314 * 31 / 32 + 223 * 3 / 8  using shifts for dividing may be promising, 2 mults, 2 shifts, 1 add.
+  *      (31 * 314) >> 5 + (3 * 223) >> 3
+  *      ? would this remove AM carrier.  ie satisfy sin()^2 + cos()^2 = 1
+  *      ? need to highpass the result to remove DC generated from carrier.
+  */
 
 #define VERSION 1.36
 
@@ -92,7 +114,7 @@
  #include <OLED1306_Basic.h>
 #endif
 
-#include <i2c_t3.h>      // non-blocking wire library ( although only one large buffer )
+#include <i2c_t3.h>      // non-blocking wire library
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -489,8 +511,7 @@ public:
 
   #define FAST __attribute__((optimize("Ofast")))
 
-  #define F_XTAL 27005000            // Crystal freq in Hz, nominal frequency 27004300
-                                     // seems it needs to be set higher than normal
+  #define F_XTAL 27003380            // Crystal freq in Hz, nominal frequency 27004300
   //#define F_XTAL 25004000          // Alternate SI clock
   //#define F_XTAL 20004000          // A shared-single 20MHz processor/pll clock
   volatile uint32_t fxtal = F_XTAL;
@@ -718,10 +739,10 @@ void set_agc_gain(float g ){
    // try front end gain agc again
    // agc_amp.gain(g);
    //agc_amp.gain(1.0);
-  noInterrupts();
+  AudioNoInterrupts();
     RxTx1.gain(0,g);     // audio mux's
     RxTx2.gain(0,g);     // Rx = 0, Tx mic = 1, Tx usb = 2
-  interrupts();
+  AudioInterrupts();
 }
 
 
@@ -775,25 +796,44 @@ int bw;                              // or bandwidth changed in menu's.
 
    bw = 3300;                        // remove warning uninitialized variable
    switch( filter ){
-       case 0: bw = 1000; break;     // data duplicated from menu strings.  Could be improved so that
-       case 1: bw = 1500; break;     // one doesn't need to maintain data in two places if changes are made.
+       case 0: bw = 2500; break;     // data duplicated from menu strings.  Could be improved so that
+       case 1: bw = 2500; break;     // one doesn't need to maintain data in two places if changes are made.
        case 2: bw = 2700; break;
        case 3: bw = 3000; break;
        case 4: bw = 3300; break;
+       case 5: bw = 3600; break;
    }
 
   bfo = bw/2;                           // weaver audio folding at 1/2 bandwidth
+
+  if( filter > 1 ){                            // ssb filters
+     I_filter.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
+     I_filter.setLowpass(1,bfo,0.60134489);       // with Butterworth Q's for 4 cascade
+     I_filter.setLowpass(2,bfo,0.89997622);
+     I_filter.setLowpass(3,bfo,2.5629154);
+
+     Q_filter.setLowpass(0,bfo,0.50979558);
+     Q_filter.setLowpass(1,bfo,0.60134489);
+     Q_filter.setLowpass(2,bfo,0.89997622);
+     Q_filter.setLowpass(3,bfo,2.5629154);
+
+     set_af_gain(af_gain);
+  }
+  else{                                           // CW filters
+     I_filter.setLowpass(0,bfo,0.51763809);       // filters are set to a value without distortion
+     I_filter.setLowpass(1,bfo,0.70710678);       // with Butterworth Q's for 3 cascade
+     I_filter.setLowpass(2,bfo,1.9318517);        
+     I_filter.setBandpass(3,750/2,(filter == 0) ? 7:3);       // and one stage of bandpass at 1/2 audio tone?
+                                                              // is this correct? Can this be done with Weaver RX?
+                                                              // volume is greatly reduced
+     Q_filter.setLowpass(0,bfo,0.51763809);
+     Q_filter.setLowpass(1,bfo,0.70710678);
+     Q_filter.setLowpass(2,bfo,1.9318517);
+     Q_filter.setBandpass(3,750/2,(filter == 0) ? 7:3); 
+
+     set_af_gain( 3 * af_gain );
+  }
   
-  I_filter.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
-  I_filter.setLowpass(1,bfo,0.60134489);       // with Butterworth Q's for 4 cascade
-  I_filter.setLowpass(2,bfo,0.89997622);
-  I_filter.setLowpass(3,bfo,2.5629154);
-
-  Q_filter.setLowpass(0,bfo,0.50979558);
-  Q_filter.setLowpass(1,bfo,0.60134489);
-  Q_filter.setLowpass(2,bfo,0.89997622);
-  Q_filter.setLowpass(3,bfo,2.5629154);
-
   AudioNoInterrupts();                     // need so cos and sin start with correct phase
 
     // complex BFO
@@ -1209,9 +1249,9 @@ struct MENU band_menu = {
 };
 
 struct MENU bandwidth_menu = {
-    5,
+    6,
     "Band Width",
-    {"1000", "1500", "2700", "3000", "3300" }
+    {"Narrow", "CW-Wide", "2700", "3000", "3300", "3600" }
 };
 
 struct MENU main_menu = {
@@ -1363,7 +1403,7 @@ static int base;
 
 
 #ifdef NOWAY
-/***********************   saving some old code
+/***********************   saving some old code   */
 
 /**************************************************************************/
 /*  I2C write only implementation using polling of the hardware registers */
@@ -1373,14 +1413,14 @@ static int base;
 
 
 // use some upper bits in the buffer for control
-/*
+
 #define ISTART 0x100
 #define ISTOP  0x200
 #define I2BUFSIZE 256      
 uint16_t i2buf[I2BUFSIZE];
 int i2in, i2out;
-*/
-/*
+
+
 void i2init(){
     // start up our local I2C routines
   Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR ?, dma takes a long time to reset the OLED. Both seem to work.
@@ -1397,19 +1437,18 @@ void i2start( unsigned char adr ){
 
   // could double buffer and use the callback ( Wire.onTransmitDone(function); ) to send the next set of buffered data up to 
   // the next stop.  But it seems that could be tricky when buffers empty and callback has nothing to do, or when the buffer fills.
-  /*
+
 unsigned int dat;
   // shift the address over and add the start flag
   dat = ( adr << 1 ) | ISTART;
   i2send( dat ); */
-/* }*/
-/*
+ }
+
 void i2send( unsigned int data ){   // just save stuff in the buffer
-//int next;
+int next;
 
   Wire.write( data );
-  */
-/*
+
   next = (i2in + 1) & (I2BUFSIZE - 1);
   while( i2out == next ) i2poll();
   i2buf[i2in++] = data;
@@ -1418,14 +1457,14 @@ void i2send( unsigned int data ){   // just save stuff in the buffer
   
 }
 
-/*
+
 void i2stop( ){
   Wire.sendTransmission();     // non-blocking
  // Wire.endTransmission();      // blocking
   // i2send( ISTOP );   // que a stop condition
-}*/
+}
 
-/*
+
 void i2flush(){  //  call poll to empty out the buffer.  This one does block.
 
   while( i2poll() ); 
@@ -1480,7 +1519,7 @@ static int data;
    if( i2in != i2out ) return (state + 8);
    else return state;
 }
-*/
+
 
 #endif
  
