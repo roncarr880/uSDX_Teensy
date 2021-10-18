@@ -27,6 +27,7 @@
  *                  This required changing the 7 audio library .ccp control files to use i2c_t3 instead of Wire to correct link errors.
  *                  A Teensyduino update will remove these changes ( duplicate wire definitions result ).  Also edited i2c_t3.h to
  *                  allow only 1 I2C bus to run.  This is a user option as noted in the file.
+ *    Version 1.37  Added a Audio Library object for an AM decoder as an exercise in learning how to add a custom audio object.              
  *    
  */
 
@@ -52,7 +53,7 @@
   *      ? need to highpass the result to remove DC generated from carrier.
   */
 
-#define VERSION 1.36
+#define VERSION 1.37
 
 /*
  * The encoder switch works like this:
@@ -115,6 +116,7 @@
 #endif
 
 #include <i2c_t3.h>      // non-blocking wire library
+#include "AM_decoder.h"
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -173,7 +175,8 @@ struct BAND_STACK{
 #define CW 0
 #define LSB 1
 #define USB 2
-#define AM 3 
+#define AM 3
+#define AM2 4 
 struct BAND_STACK bandstack[] = {    // index is the band
   { LSB ,  3928000, 1000 },
   { AM  ,  6000000, 5000 },
@@ -204,11 +207,61 @@ float sig_usb;
 //#include <SD.h>
 //#include <SerialFlash.h>
 
-// Weaver with bi-quads.  Tx sources, USB added.  Separate AGC amp removed.
+// Weaver with bi-quads.  Tx sources, USB added.  Separate AGC amp removed.  AM decode library object.
+
 
 // GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=98.5714340209961,246.4285707473755
+//AudioInputUSB            usb2;           //xy=102.5714340209961,309.4285707473755
+AudioAnalyzePeak         peak1;          //xy=268.5714340209961,91.42857074737549
+AudioMixer4              RxTx1;          //xy=288.5714340209961,169.4285707473755
+AudioMixer4              RxTx2;          //xy=291.5714340209961,340.4285707473755
+AudioFilterBiquad        I_filter;       //xy=424.5714340209961,190.4285707473755
+AudioAnalyzePeak         peak2;          //xy=427.5714340209961,94.42857074737549
+AudioFilterBiquad        Q_filter;       //xy=428.5714340209961,324.4285707473755
+AudioSynthWaveformSine   cosBFO;         //xy=527.5714340209961,239.4285707473755
+AudioSynthWaveformSine   sinBFO;         //xy=531.5714340209961,286.4285707473755
+AudioEffectMultiply      I_mixer;        //xy=630.5714340209961,195.4285707473755
+AudioEffectMultiply      Q_mixer;        //xy=634.5714340209961,331.4285707473755
+AudioAMdecode2           AMdecode2;      //xy=642.5714340209961,410.4285707473755
+AudioMixer4              Sub_SSB;        //xy=769.5714340209961,251.4285707473755
+AudioFilterBiquad        AMFilter;        //xy=834.2857246398926,410.0000047683716
+AudioAnalyzeRMS          rms1;           //xy=889.5714340209961,161.4285707473755
+AudioMixer4              Volume;         //xy=927.1428571428571,262.85714285714283
+//AudioOutputUSB           usb1;           //xy=1055.571434020996,301.4285707473755
+AudioOutputAnalog        dac1;           //xy=1060.571434020996,251.4285707473755
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
+AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord4(adcs1, 0, peak1, 0);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord8(RxTx1, I_filter);
+AudioConnection          patchCord9(RxTx1, peak2);
+AudioConnection          patchCord10(RxTx2, Q_filter);
+AudioConnection          patchCord11(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord12(I_filter, 0, AMdecode2, 0);
+AudioConnection          patchCord13(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord14(Q_filter, 0, AMdecode2, 1);
+AudioConnection          patchCord15(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord16(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord17(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord18(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord19(AMdecode2, AMFilter);
+AudioConnection          patchCord20(Sub_SSB, rms1);
+AudioConnection          patchCord21(Sub_SSB, 0, Volume, 0);
+AudioConnection          patchCord22(AMFilter, 0, Volume, 1);
+AudioConnection          patchCord23(Volume, dac1);
+//AudioConnection          patchCord24(Volume, 0, usb1, 0);
+//AudioConnection          patchCord25(Volume, 0, usb1, 1);
+// GUItool: end automatically generated code
+
+
+/*
+// GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=74.28574752807617,447.1429252624512
-//AudioInputUSB            usb2;           //xy=78.57145690917969,510.0000228881836
+AudioInputUSB            usb2;           //xy=78.57145690917969,510.0000228881836
 AudioAnalyzePeak         peak1;          //xy=244.4285888671875,292.0000305175781
 AudioMixer4              RxTx1;         //xy=264.2857246398926,370.00003719329834
 AudioMixer4              RxTx2;         //xy=267.14288330078125,541.428599357605
@@ -223,15 +276,15 @@ AudioMixer4              MysteryObject;         //xy=618.5715065002441,611.42857
 AudioMixer4              Sub_SSB;        //xy=745.2857513427734,452.00001430511475
 AudioAnalyzeRMS          rms1;           //xy=865.7143783569336,362.28568840026855
 AudioAmplifier           Volume;           //xy=890.0000457763672,452.8572006225586
-//AudioOutputUSB           usb1;           //xy=1031.4286308288574,502.8572196960449
+AudioOutputUSB           usb1;           //xy=1031.4286308288574,502.8572196960449
 AudioOutputAnalog        dac1;           //xy=1036.1427917480469,452.00001335144043
 AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
 AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
 AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
 AudioConnection          patchCord4(adcs1, 0, peak1, 0);
 AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
-//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
-//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
 AudioConnection          patchCord8(RxTx1, I_filter);
 AudioConnection          patchCord9(RxTx1, peak2);
 AudioConnection          patchCord10(RxTx2, Q_filter);
@@ -246,10 +299,10 @@ AudioConnection          patchCord18(Q_mixer, 0, Sub_SSB, 2);
 AudioConnection          patchCord19(Sub_SSB, Volume);
 AudioConnection          patchCord20(Sub_SSB, rms1);
 AudioConnection          patchCord21(Volume, dac1);
-//AudioConnection          patchCord22(Volume, 0, usb1, 0);
-//AudioConnection          patchCord23(Volume, 0, usb1, 1);
+AudioConnection          patchCord22(Volume, 0, usb1, 0);
+AudioConnection          patchCord23(Volume, 0, usb1, 1);
 // GUItool: end automatically generated code
-
+*/
 /*
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=74.28574752807617,447.1429252624512
@@ -690,6 +743,14 @@ void setup() {
   RxTx2.gain(1,0.0);
   RxTx2.gain(2,0.0);
   RxTx2.gain(3,0.0);
+
+  // AM post multirate filter
+  // 0.54119610   butterworth Q's two cascade
+  // 1.3065630
+  AMFilter.setHighpass(0,300,0.54119610);    // hipass to remove DC level
+  AMFilter.setHighpass(1,300,1.3065630);
+  AMFilter.setLowpass(2,4000,0.54119610);    // lowpass for multirate upsample 11k to 44k
+  AMFilter.setLowpass(3,4000,1.3065630);
  
 
   set_af_gain(af_gain);
@@ -731,7 +792,15 @@ void set_bandwidth( int bw ){
 
 void set_af_gain(float g){
 
-  Volume.gain(g);
+  if( mode >= AM ){
+     Volume.gain(0,0.0);
+     Volume.gain(1,2*g);
+  }
+  else{
+     Volume.gain(1,0.0);
+     Volume.gain(0,g);    
+  }
+
   
 }
 
@@ -804,6 +873,7 @@ int bw;                              // or bandwidth changed in menu's.
        case 5: bw = 3600; break;
    }
 
+  if( mode == AM || mode == AM2 ) bw = 7000;   // full signal to AM decoder as Weaver not used
   bfo = bw/2;                           // weaver audio folding at 1/2 bandwidth
 
   if( filter > 1 ){                            // ssb filters
@@ -1034,7 +1104,8 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
     // with weaver rx, freq is the display frequency.  vfo and bfo move about with bandwidth changes.
     freq = f;
     //    noInterrupts();
-    if(mode == CW){
+    if( mode >= AM ) si5351.freq(freq+1500,0,90);       // tune one sideband
+    else if(mode == CW){
       si5351.freq(freq + cw_offset - bfo, 90, 0);  // RX in LSB
       si5351.freq_calc_fast(-cw_offset + bfo); si5351.SendPLLBRegisterBulk(); // TX at freq
     }
@@ -1047,12 +1118,12 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
 }
 
 void status_display(){
-const char modes[] = "CW LSBUSBAM ";
+const char modes[] = "CW LSBUSBAM AM2";
 char msg[4];
 char msg2[9];
 char buf[20];
     
-    if( mode > 3 ) return;           //!!! how to handle memory tuning
+    if( mode > 4 ) return;           //!!! how to handle memory tuning
     strncpy(msg,&modes[3*mode],3);
     msg[3] = 0;
     
@@ -1104,8 +1175,12 @@ void band_change( int to_band ){
 void mode_change( int to_mode ){
 
   mode = to_mode;
-  qsy( freq );            // to get phasing correct
-  // set_af_gain(af_gain);   not needed unless we put the mode volume mux back in the code. Once needed for AM mode.
+  qsy( freq );                                       // to get phasing correct
+  if( mode == AM ) AMdecode2.setmode(1);           //  1 = fast code, 2 = more exact slower code
+  else if( mode == AM2 ) AMdecode2.setmode(2);
+  else AMdecode2.setmode(0);
+  set_af_gain(af_gain);
+  set_rx_bandwidth();
 }
 
 
@@ -1236,9 +1311,9 @@ struct MENU {
 };
 
 struct MENU mode_menu = {
-   6,
+   7,
    "Select Mode",
-   { "CW", "LSB", "USB", "AM", "Mem Tune", "WSPR" }          
+   { "CW", "LSB", "USB", "AM", "AM2", "Mem Tune", "WSPR" }          
 };
 
 
