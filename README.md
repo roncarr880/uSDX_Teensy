@@ -1,5 +1,5 @@
 # uSDX_Teensy
-Currently the basics of a receiver are working using the Weaver method of SSB decoding.\
-An AM decoder was added.  The AM decoder was removed. usdx_t32 has that code but no\
-longer working on that version.  New version is named usdx_wvr.
+A project using the uSDX hardware and controlled with a Teensy 3.2
+This project uses the Teensy Audio Library for a large part of the DSP processing.
+
 
