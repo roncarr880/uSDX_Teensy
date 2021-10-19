@@ -28,6 +28,9 @@
  *                  A Teensyduino update will remove these changes ( duplicate wire definitions result ).  Also edited i2c_t3.h to
  *                  allow only 1 I2C bus to run.  This is a user option as noted in the file.
  *    Version 1.37  Added a Audio Library object for an AM decoder as an exercise in learning how to add a custom audio object.              
+ *    Version 1.38  Added Hilberts for AM decoding, Tx magnitude and phase, and FFT analysis.  Some redundant elements in design now.
+ *                  Removed the AM decoder Library object test.  Added AM detector at about 11k IF frequency.  Hilberts are multi
+ *                  purpose. Can have only one of TX, FFT, AM running at any one time as each will need different filters.
  *    
  */
 
@@ -49,11 +52,9 @@
   *      314 - 314/32 + 223/4 + 223/8 = 387
   *      314 * 31 / 32 + 223 * 3 / 8  using shifts for dividing may be promising, 2 mults, 2 shifts, 1 add.
   *      (31 * 314) >> 5 + (3 * 223) >> 3
-  *      ? would this remove AM carrier.  ie satisfy sin()^2 + cos()^2 = 1
-  *      ? need to highpass the result to remove DC generated from carrier.
   */
 
-#define VERSION 1.37
+#define VERSION 1.38
 
 /*
  * The encoder switch works like this:
@@ -116,7 +117,8 @@
 #endif
 
 #include <i2c_t3.h>      // non-blocking wire library
-#include "AM_decoder.h"
+// #include "AM_decoder.h"
+#include "filters.h"
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -176,7 +178,7 @@ struct BAND_STACK{
 #define LSB 1
 #define USB 2
 #define AM 3
-#define AM2 4 
+
 struct BAND_STACK bandstack[] = {    // index is the band
   { LSB ,  3928000, 1000 },
   { AM  ,  6000000, 5000 },
@@ -207,9 +209,123 @@ float sig_usb;
 //#include <SD.h>
 //#include <SerialFlash.h>
 
+// Hilberts for AM decoder at an IF freq, Tx magnitude and phase, FFT
+// GUItool: begin automatically generated code
+
+AudioInputAnalogStereo   adcs1;          //xy=98.5714340209961,246.4285707473755
+//AudioInputUSB            usb2;           //xy=102.5714340209961,309.4285707473755
+AudioAnalyzePeak         peak1;          //xy=268.5714340209961,91.42857074737549
+AudioMixer4              RxTx2;          //xy=281.5714569091797,351.85712242126465
+AudioMixer4              RxTx1;          //xy=288.5714340209961,169.4285707473755
+AudioFilterFIR           Qm00;           //xy=372.8571319580078,284.28572273254395
+AudioFilterFIR           Ip90;           //xy=375.7143783569336,240.00003051757812
+AudioFilterBiquad        I_filter;       //xy=426.0000457763672,173.28573036193848
+AudioFilterBiquad        Q_filter;       //xy=425.7143249511719,335.85709381103516
+AudioSynthWaveformSine   sinBFO;         //xy=547.2857475280762,286.42859649658203
+AudioSynthWaveformSine   cosBFO;         //xy=551.8571929931641,239.42859268188477
+AudioMixer4              MagPhase;         //xy=552.8570404052734,397.1427230834961
+AudioEffectMultiply      I_mixer;        //xy=630.5712928771973,185.4285945892334
+AudioEffectMultiply      Q_mixer;        //xy=631.7141418457031,335.7142868041992
+AudioMixer4              AddSub;         //xy=635.7143363952637,109.99999618530273
+AudioMixer4              Sub_SSB;        //xy=755.2857360839844,257.14281845092773
+//AudioAnalyzeFFT256       fft256_1;       //xy=801.4285736083984,59.99999809265137
+AudioEffectRectifier     AMdet;       //xy=801.4288711547852,110.0001106262207
+AudioAmplifier           Volume;           //xy=907.1428031921387,258.57144927978516
+AudioAnalyzeRMS          rms1;           //xy=908.1428833007812,199.99998664855957
+AudioFilterFIR           AMlow;           //xy=951.4284324645996,110.00000190734863
+AudioOutputAnalog        dac1;           //xy=1060.5713958740234,229.99998664855957
+//AudioOutputUSB           usb1;           //xy=1064.142879486084,285.7142925262451
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
+AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord4(adcs1, 0, peak1, 0);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord8(RxTx2, Q_filter);
+AudioConnection          patchCord9(RxTx2, Qm00);
+AudioConnection          patchCord10(RxTx1, I_filter);
+AudioConnection          patchCord11(RxTx1, Ip90);
+AudioConnection          patchCord12(Qm00, 0, AddSub, 2);
+AudioConnection          patchCord13(Qm00, 0, MagPhase, 1);
+AudioConnection          patchCord14(Ip90, 0, AddSub, 1);
+AudioConnection          patchCord15(Ip90, 0, MagPhase, 0);
+AudioConnection          patchCord16(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord17(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord18(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord19(sinBFO, 0, Sub_SSB, 3);
+AudioConnection          patchCord20(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord21(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord22(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord23(AddSub, AMdet);
+//AudioConnection          patchCord24(AddSub, fft256_1);
+AudioConnection          patchCord25(Sub_SSB, rms1);
+AudioConnection          patchCord26(Sub_SSB, Volume);
+AudioConnection          patchCord27(AMdet, AMlow);
+AudioConnection          patchCord28(Volume, dac1);
+//AudioConnection          patchCord29(Volume, 0, usb1, 0);
+//AudioConnection          patchCord30(Volume, 0, usb1, 1);
+AudioConnection          patchCord31(AMlow, 0, Sub_SSB, 0);
+// GUItool: end automatically generated code
+
+/*
+AudioInputAnalogStereo   adcs1;          //xy=98.5714340209961,246.4285707473755
+//AudioInputUSB            usb2;           //xy=102.5714340209961,309.4285707473755
+AudioAnalyzePeak         peak1;          //xy=268.5714340209961,91.42857074737549
+AudioMixer4              RxTx2;          //xy=281.5714569091797,351.85712242126465
+AudioMixer4              RxTx1;          //xy=288.5714340209961,169.4285707473755
+AudioFilterFIR           Qm00;           //xy=372.8571319580078,284.28572273254395
+AudioFilterFIR           Ip90;           //xy=375.7143783569336,240.00003051757812
+AudioFilterBiquad        I_filter;       //xy=426.0000457763672,173.28573036193848
+AudioFilterBiquad        Q_filter;       //xy=425.7143249511719,335.85709381103516
+AudioSynthWaveformSine   sinBFO;         //xy=547.2857475280762,286.42859649658203
+AudioSynthWaveformSine   cosBFO;         //xy=551.8571929931641,239.42859268188477
+//AudioMixer4              MagPhase;         //xy=552.8570404052734,397.1427230834961
+AudioEffectMultiply      I_mixer;        //xy=630.5712928771973,185.4285945892334
+AudioEffectMultiply      Q_mixer;        //xy=631.7141418457031,335.7142868041992
+AudioMixer4              AddSub;         //xy=635.7143363952637,109.99999618530273
+AudioMixer4              Sub_SSB;        //xy=733.8571701049805,257.14283561706543
+//AudioAnalyzeFFT256       fft256_1;       //xy=801.4285736083984,59.99999809265137
+AudioEffectRectifier     AMdet;       //xy=801.4288711547852,110.0001106262207
+AudioAnalyzeRMS          rms1;           //xy=825.2856788635254,178.5714168548584
+AudioMixer4              Volume;         //xy=920.0001106262207,258.5714282989502
+AudioFilterFIR           AMlow;           //xy=951.4284324645996,110.00000190734863
+AudioOutputAnalog        dac1;           //xy=1060.5713958740234,229.99998664855957
+//AudioOutputUSB           usb1;           //xy=1064.142879486084,285.7142925262451
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
+AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord4(adcs1, 0, peak1, 0);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+//AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
+AudioConnection          patchCord8(RxTx2, Q_filter);
+AudioConnection          patchCord9(RxTx2, Qm00);
+AudioConnection          patchCord10(RxTx1, I_filter);
+AudioConnection          patchCord11(RxTx1, Ip90);
+AudioConnection          patchCord12(Qm00, 0, AddSub, 2);
+//AudioConnection          patchCord13(Qm00, 0, MagPhase, 1);
+AudioConnection          patchCord14(Ip90, 0, AddSub, 1);
+//AudioConnection          patchCord15(Ip90, 0, MagPhase, 0);
+AudioConnection          patchCord16(I_filter, 0, I_mixer, 0);
+AudioConnection          patchCord17(Q_filter, 0, Q_mixer, 0);
+AudioConnection          patchCord18(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord19(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord20(I_mixer, 0, Sub_SSB, 1);
+AudioConnection          patchCord21(Q_mixer, 0, Sub_SSB, 2);
+AudioConnection          patchCord22(AddSub, AMdet);
+//AudioConnection          patchCord23(AddSub, fft256_1);
+AudioConnection          patchCord24(Sub_SSB, rms1);
+AudioConnection          patchCord25(Sub_SSB, 0, Volume, 0);
+AudioConnection          patchCord26(AMdet, AMlow);
+AudioConnection          patchCord27(Volume, dac1);
+//AudioConnection          patchCord28(Volume, 0, usb1, 0);
+//AudioConnection          patchCord29(Volume, 0, usb1, 1);
+AudioConnection          patchCord30(AMlow, 0, Volume, 1);
+// GUItool: end automatically generated code
+*/
+/*
 // Weaver with bi-quads.  Tx sources, USB added.  Separate AGC amp removed.  AM decode library object.
-
-
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=98.5714340209961,246.4285707473755
 //AudioInputUSB            usb2;           //xy=102.5714340209961,309.4285707473755
@@ -256,7 +372,7 @@ AudioConnection          patchCord23(Volume, dac1);
 //AudioConnection          patchCord24(Volume, 0, usb1, 0);
 //AudioConnection          patchCord25(Volume, 0, usb1, 1);
 // GUItool: end automatically generated code
-
+*/
 
 /*
 // GUItool: begin automatically generated code
@@ -744,14 +860,11 @@ void setup() {
   RxTx2.gain(2,0.0);
   RxTx2.gain(3,0.0);
 
-  // AM post multirate filter
   // 0.54119610   butterworth Q's two cascade
   // 1.3065630
-  AMFilter.setHighpass(0,300,0.54119610);    // hipass to remove DC level
-  AMFilter.setHighpass(1,300,1.3065630);
-  AMFilter.setLowpass(2,4000,0.54119610);    // lowpass for multirate upsample 11k to 44k
-  AMFilter.setLowpass(3,4000,1.3065630);
- 
+  //  0.51763809  butterworth Q's 3 cascade
+  //  0.70710678
+  //  1.9318517
 
   set_af_gain(af_gain);
   set_agc_gain(agc_gain);
@@ -792,14 +905,17 @@ void set_bandwidth( int bw ){
 
 void set_af_gain(float g){
 
+   Volume.gain(g);
+/*
   if( mode >= AM ){
      Volume.gain(0,0.0);
-     Volume.gain(1,2*g);
+     Volume.gain(1,g);
   }
   else{
      Volume.gain(1,0.0);
      Volume.gain(0,g);    
   }
+*/  
 
   
 }
@@ -865,16 +981,16 @@ int bw;                              // or bandwidth changed in menu's.
 
    bw = 3300;                        // remove warning uninitialized variable
    switch( filter ){
-       case 0: bw = 2500; break;     // data duplicated from menu strings.  Could be improved so that
-       case 1: bw = 2500; break;     // one doesn't need to maintain data in two places if changes are made.
+       case 0: bw = 2200; break;     // data duplicated from menu strings.  Could be improved so that
+       case 1: bw = 2200; break;     // one doesn't need to maintain data in two places if changes are made.
        case 2: bw = 2700; break;
        case 3: bw = 3000; break;
        case 4: bw = 3300; break;
        case 5: bw = 3600; break;
    }
 
-  if( mode == AM || mode == AM2 ) bw = 7000;   // full signal to AM decoder as Weaver not used
-  bfo = bw/2;                           // weaver audio folding at 1/2 bandwidth
+  //if( mode == AM ) bw = 2*4500;   // 4500 for AM, weaver not used but for AGC  !!! needed anymore ?
+  bfo = bw/2;                                  // weaver audio folding at 1/2 bandwidth
 
   if( filter > 1 ){                            // ssb filters
      I_filter.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
@@ -890,6 +1006,21 @@ int bw;                              // or bandwidth changed in menu's.
      set_af_gain(af_gain);
   }
   else{                                           // CW filters
+     // 0.54119610   butterworth Q's two cascade
+     // 1.3065630
+
+     I_filter.setLowpass(0,600+100*filter,0.54119610);       // filter at 1/2 of desired cw tone
+     I_filter.setLowpass(1,600+100*filter,1.3065630); 
+     I_filter.setHighpass(2,250-100*filter,0.54119610);        
+     I_filter.setHighpass(3,250-100*filter,1.3065630); 
+                                               
+     Q_filter.setLowpass(0,600+100*filter,0.54119610);
+     Q_filter.setLowpass(1,600+100*filter,1.3065630);
+     Q_filter.setHighpass(2,250-100*filter,0.54119610);
+     Q_filter.setHighpass(3,250-100*filter,1.3065630); 
+     
+    
+    /*
      I_filter.setLowpass(0,bfo,0.51763809);       // filters are set to a value without distortion
      I_filter.setLowpass(1,bfo,0.70710678);       // with Butterworth Q's for 3 cascade
      I_filter.setLowpass(2,bfo,1.9318517);        
@@ -902,6 +1033,7 @@ int bw;                              // or bandwidth changed in menu's.
      Q_filter.setBandpass(3,750/2,(filter == 0) ? 7:3); 
 
      set_af_gain( 3 * af_gain );
+     */
   }
   
   AudioNoInterrupts();                     // need so cos and sin start with correct phase
@@ -1010,8 +1142,8 @@ static int count;
   */
    LCD.print((char *)"Adc ",0,ROW4);
    LCD.printNumF( peak1.read(),2,4*6,ROW4);
-   LCD.print((char *)"Sel ",0,ROW5);
-   LCD.printNumF( peak2.read(),2,4*6,ROW5);
+ //  LCD.print((char *)"Sel ",0,ROW5);
+ //  LCD.printNumF( peak2.read(),2,4*6,ROW5);
 }
 
 
@@ -1104,7 +1236,7 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
     // with weaver rx, freq is the display frequency.  vfo and bfo move about with bandwidth changes.
     freq = f;
     //    noInterrupts();
-    if( mode >= AM ) si5351.freq(freq+1500,0,90);       // tune one sideband
+    if( mode >= AM ) si5351.freq(freq-9000,0,90);  // tune one sideband, some of other sideband goes to AGC via weaver rx ( -8000 )
     else if(mode == CW){
       si5351.freq(freq + cw_offset - bfo, 90, 0);  // RX in LSB
       si5351.freq_calc_fast(-cw_offset + bfo); si5351.SendPLLBRegisterBulk(); // TX at freq
@@ -1118,12 +1250,12 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
 }
 
 void status_display(){
-const char modes[] = "CW LSBUSBAM AM2";
+const char modes[] = "CW LSBUSBAM ";
 char msg[4];
 char msg2[9];
 char buf[20];
     
-    if( mode > 4 ) return;           //!!! how to handle memory tuning
+    if( mode > 3 ) return;           //!!! how to handle memory tuning
     strncpy(msg,&modes[3*mode],3);
     msg[3] = 0;
     
@@ -1159,6 +1291,7 @@ char buf[20];
 
 void band_change( int to_band ){
 
+  if( mode == AM ) AMoff();
   bandstack[band].freq = freq;
   bandstack[band].mode = mode;
   bandstack[band].stp  = step_;
@@ -1174,15 +1307,41 @@ void band_change( int to_band ){
 
 void mode_change( int to_mode ){
 
+  if( mode == AM ) AMoff();                          // save some processing time
   mode = to_mode;
-  qsy( freq );                                       // to get phasing correct
-  if( mode == AM ) AMdecode2.setmode(1);           //  1 = fast code, 2 = more exact slower code
-  else if( mode == AM2 ) AMdecode2.setmode(2);
-  else AMdecode2.setmode(0);
-  set_af_gain(af_gain);
-  set_rx_bandwidth();
+  qsy( freq );                                       // to get phasing correct on QSD
+ // set_af_gain(af_gain);                              // listen to the correct audio path
+ // set_rx_bandwidth();                                // bandwidth is mode dependent
+  if( mode == AM ) AMon();
+  audio_select(mode);
 }
 
+// select the audio to listen to: SSB, AM, Sidetone
+void audio_select(int m){
+const float sel[3][4] = { {0,1.0,-1.0,0}, {1.0,0,0,0}, {0,0,0,0.1} };    // !!! make sidetone volume variable
+
+   if( m == LSB || m == USB || m == CW ) m = 0;
+   else if( m == AM ) m = 1;
+   else m = 2;                    // sidetone
+   // else need an off setting ?
+
+   for( int i = 0; i < 4; ++i ) Sub_SSB.gain(i,sel[m][i]);
+}
+
+// turn on / off the Fir filters for AM mode
+void AMon(){
+    AddSub.gain(1,1.0);
+    AddSub.gain(2,1.0);
+    Ip90.begin(AMp90,34);
+    Qm00.begin(AMm00,34);
+    AMlow.begin(AMlowpass,30);
+}
+
+void AMoff(){
+   Ip90.end();
+   Qm00.end();
+   AMlow.end();
+}
 
 void menu_cleanup(){
 
@@ -1311,9 +1470,9 @@ struct MENU {
 };
 
 struct MENU mode_menu = {
-   7,
+   5,
    "Select Mode",
-   { "CW", "LSB", "USB", "AM", "AM2", "Mem Tune", "WSPR" }          
+   { "CW", "LSB", "USB", "AM", "Mem Tune" }          
 };
 
 
