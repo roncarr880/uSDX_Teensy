@@ -31,31 +31,16 @@
  *    Version 1.38  Added Hilberts for AM decoding, Tx magnitude and phase, and FFT analysis.  Some redundant elements in design now.
  *                  Removed the AM decoder Library object test.  Added AM detector at about 11k IF frequency.  Hilberts are multi
  *                  purpose. Can have only one of TX, FFT, AM running at any one time as each will need different filters.
- *    Version 1.39  Continuing with a Hilbert only version.              
+ *    Version 1.39  Continuing with a Hilbert only version. Having issues with I and Q out of sync it seems.  No decode of SSB 
+ *                  unless move some patchcords around or remove objects.  Rectify object was misbehaving. Updated my
+ *                  Teensyduino install.
+ *    Version 1.40  Wrote MagPhase object to extract data from the Audio library stream to use for transmitting.  Set _UA at             
+ *                  44117/8 for initial testing.
  *    
  */
 
- /*
-  * peak magnitude estimation ( derek rowell )
-  *   0.960433870103 * maxIQ + 0.3978247347593 * minIQ
-  *   Testing
-  *   sqrt ( 12*12 + 7*7 ) is 13.892
-  *   0.9604 * 12 + 0.3978 * 7 is 14.3
-  *   Q15 version: 31470 * 12  +  13035 * 7   =  468,885 then shift by 15 = 14 ( 1110 )
-  *   
-  *   QCX-SSB method:  maxIQ + 1/4 minIQ
-  *   12 + 7/4 = 13
-  *   bigger numbers
-  *      314  223    sqrt --> 385
-  *      314 + 223/4 = 369
-  *  Q15             = 390
-  *      314 + 223/4 + 223/8 = 397
-  *      314 - 314/32 + 223/4 + 223/8 = 387
-  *      314 * 31 / 32 + 223 * 3 / 8  using shifts for dividing may be promising, 2 mults, 2 shifts, 1 add.
-  *      (31 * 314) >> 5 + (3 * 223) >> 3
-  */
-
-#define VERSION 1.39
+ 
+#define VERSION 1.40
 
 /*
  * The encoder switch works like this:
@@ -66,7 +51,7 @@
  *   different behavior. 
  */
 
- // QCX pin definitions  to Teensy 3.2
+ // QCX pin definitions mega328 to Teensy 3.2
 /* 
 #define LCD_D4  0         //PD0    (pin 2)      N/C
 #define LCD_D5  1         //PD1    (pin 3)      N/C
@@ -104,8 +89,6 @@
 
 #define DEBUG 1       // enables serial prints
 
-// #include "filters.h"
-
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
 // 84 x 48 pixels or 6 lines by 14 characters in text mode
 #ifdef USE_LCD
@@ -118,7 +101,7 @@
 #endif
 
 #include <i2c_t3.h>      // non-blocking wire library
-// #include "AM_decoder.h"
+#include "MagPhase.h"
 #include "filters.h"
 
 extern unsigned char SmallFont[];
@@ -141,6 +124,9 @@ extern unsigned char MediumNumbers[];
 #ifdef USE_OLED
    OLED1306 OLD;
 #endif
+
+// transmit interval timer
+IntervalTimer EER_timer;
 
 #define EN_A  7            // encoder pins assignment
 #define EN_B  6
@@ -200,7 +186,7 @@ int step_timer;                // allows double tap to backup the freq step to 5
                                // and returns to the normal double tap command ( volume )
 float af_gain = 0.3;
 float agc_gain = 1.0;           // above 1 perhaps not a good idea.
-float sig_usb;
+float sig_rms;
 
 /******************************** Teensy Audio Library **********************************/ 
 
@@ -211,7 +197,6 @@ float sig_usb;
 //#include <SerialFlash.h>
 
 // Hilbert version 
-// GUItool: begin automatically generated code
 
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=85.71429443359375,312.71428298950195
@@ -223,7 +208,7 @@ AudioFilterFIR           Qm00;           //xy=411.142879486084,352.1428680419922
 AudioFilterFIR           Ip90;           //xy=414.1429252624512,235.2857151031494
 AudioMixer4              Sub_SSB;        //xy=594.1429061889648,290.85711097717285
 AudioEffectRectifier     AMdet;          //xy=595.8571014404297,361.0000190734863
-AudioMixer4              MagPhase;       //xy=622.5714797973633,192.28576278686523
+AudioMagPhase2           MagPhase;       //xy=622.5714797973633,192.28576278686523
 AudioFilterFIR           AMlow;          //xy=722.9999847412109,359.5714340209961
 AudioFilterBiquad        BandWidth;        //xy=768.5713768005371,274.2857131958008
 AudioSynthWaveformSine   SideTone;         //xy=810.4286575317383,412.71426010131836
@@ -256,6 +241,239 @@ AudioConnection          patchCord21(Volume, dac1);
 //AudioConnection          patchCord23(Volume, 0, usb1, 1);
 // GUItool: end automatically generated code
 
+// !!! delete all these debug versions
+/*
+// this version works
+// changed front end amps to mixers and patched I channel to both
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=80.00000762939453,223.42857122421265
+AudioMixer4              RxTx1;         //xy=258.5714416503906,171.42856979370117
+AudioMixer4              RxTx2;         //xy=261.4285888671875,289.99997329711914
+AudioFilterFIR           Qm00;           //xy=406.00000762939453,289.42857122421265
+AudioFilterFIR           Ip90;           //xy=409.00000762939453,172.42857122421265
+AudioMixer4              MagPhase;         //xy=561.4285888671875,388.57143783569336
+AudioMixer4              Sub_SSB;        //xy=589.0000076293945,227.42857122421265
+AudioEffectRectifier     AMdet;          //xy=590.0000076293945,298.42857122421265
+AudioFilterFIR           AMlow;          //xy=717.0000076293945,296.42857122421265
+AudioFilterBiquad        BandWidth;      //xy=763.0000076293945,211.42857122421265
+AudioAnalyzePeak         peak1;          //xy=770.0000076293945,81.42857122421265
+AudioSynthWaveformSine   SideTone;       //xy=805.0000076293945,349.42857122421265
+AudioAnalyzeRMS          rms1;           //xy=919.0000076293945,148.42857122421265
+AudioMixer4              Volume;         //xy=961.0000076293945,231.42857122421265
+AudioOutputAnalog        dac1;           //xy=1059.0000076293945,147.42857122421265
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord3(adcs1, 1, RxTx2, 0);
+AudioConnection          patchCord4(RxTx1, Ip90);
+AudioConnection          patchCord5(RxTx2, Qm00);
+AudioConnection          patchCord6(Qm00, 0, Sub_SSB, 2);
+AudioConnection          patchCord7(Qm00, 0, MagPhase, 2);
+AudioConnection          patchCord8(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord9(Ip90, 0, MagPhase, 1);
+AudioConnection          patchCord10(MagPhase, 0, Volume, 3);
+AudioConnection          patchCord11(Sub_SSB, BandWidth);
+AudioConnection          patchCord12(AMdet, AMlow);
+AudioConnection          patchCord13(AMlow, 0, Volume, 1);
+AudioConnection          patchCord14(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord15(BandWidth, rms1);
+AudioConnection          patchCord16(BandWidth, peak1);
+AudioConnection          patchCord17(BandWidth, AMdet);
+AudioConnection          patchCord18(SideTone, 0, Volume, 2);
+AudioConnection          patchCord19(Volume, dac1);
+// GUItool: end automatically generated code
+*/
+
+/*
+// this version works.  Added MagPhase mixer object
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=80.00000762939453,223.42857122421265
+AudioAmplifier           agc1;           //xy=259.9999885559082,172.85713386535645
+AudioAmplifier           agc2;           //xy=260,288.57142857142856
+AudioFilterFIR           Qm00;           //xy=406.00000762939453,289.42857122421265
+AudioFilterFIR           Ip90;           //xy=409.00000762939453,172.42857122421265
+AudioMixer4              MagPhase;         //xy=561.4285888671875,388.57143783569336
+AudioMixer4              Sub_SSB;        //xy=589.0000076293945,227.42857122421265
+AudioEffectRectifier     AMdet;          //xy=590.0000076293945,298.42857122421265
+AudioFilterFIR           AMlow;          //xy=717.0000076293945,296.42857122421265
+AudioFilterBiquad        BandWidth;      //xy=763.0000076293945,211.42857122421265
+AudioAnalyzePeak         peak1;          //xy=770.0000076293945,81.42857122421265
+AudioSynthWaveformSine   SideTone;       //xy=805.0000076293945,349.42857122421265
+AudioAnalyzeRMS          rms1;           //xy=919.0000076293945,148.42857122421265
+AudioMixer4              Volume;         //xy=961.0000076293945,231.42857122421265
+AudioOutputAnalog        dac1;           //xy=1059.0000076293945,147.42857122421265
+AudioConnection          patchCord1(adcs1, 0, agc1, 0);
+AudioConnection          patchCord2(adcs1, 1, agc2, 0);
+AudioConnection          patchCord3(agc1, Ip90);
+AudioConnection          patchCord4(agc2, Qm00);
+AudioConnection          patchCord5(Qm00, 0, Sub_SSB, 2);
+AudioConnection          patchCord6(Qm00, 0, MagPhase, 2);
+AudioConnection          patchCord7(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord8(Ip90, 0, MagPhase, 1);
+AudioConnection          patchCord9(MagPhase, 0, Volume, 3);
+AudioConnection          patchCord10(Sub_SSB, BandWidth);
+AudioConnection          patchCord11(AMdet, AMlow);
+AudioConnection          patchCord12(AMlow, 0, Volume, 1);
+AudioConnection          patchCord13(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord14(BandWidth, rms1);
+AudioConnection          patchCord15(BandWidth, peak1);
+AudioConnection          patchCord16(BandWidth, AMdet);
+AudioConnection          patchCord17(SideTone, 0, Volume, 2);
+AudioConnection          patchCord18(Volume, dac1);
+// GUItool: end automatically generated code
+*/
+/*
+// GUItool: begin automatically generated code
+// this version works
+AudioInputAnalogStereo   adcs1;          //xy=80.00000762939453,223.42857122421265
+AudioAmplifier           agc1;           //xy=259.9999885559082,172.85713386535645
+AudioAmplifier           agc2;           //xy=260,288.57142857142856
+AudioFilterFIR           Qm00;           //xy=406.00000762939453,289.42857122421265
+AudioFilterFIR           Ip90;           //xy=409.00000762939453,172.42857122421265
+AudioMixer4              Sub_SSB;        //xy=589.0000076293945,227.42857122421265
+AudioEffectRectifier     AMdet;          //xy=590.0000076293945,298.42857122421265
+AudioFilterFIR           AMlow;          //xy=717.0000076293945,296.42857122421265
+AudioFilterBiquad        BandWidth;      //xy=763.0000076293945,211.42857122421265
+AudioAnalyzePeak         peak1;          //xy=770.0000076293945,81.42857122421265
+AudioSynthWaveformSine   SideTone;       //xy=805.0000076293945,349.42857122421265
+AudioAnalyzeRMS          rms1;           //xy=919.0000076293945,148.42857122421265
+AudioMixer4              Volume;         //xy=961.0000076293945,231.42857122421265
+AudioOutputAnalog        dac1;           //xy=1059.0000076293945,147.42857122421265
+AudioConnection          patchCord1(adcs1, 0, agc1, 0);
+AudioConnection          patchCord2(adcs1, 1, agc2, 0);
+AudioConnection          patchCord3(agc1, Ip90);
+AudioConnection          patchCord4(agc2, Qm00);
+AudioConnection          patchCord5(Qm00, 0, Sub_SSB, 2);
+AudioConnection          patchCord6(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord7(Sub_SSB, BandWidth);
+AudioConnection          patchCord8(AMdet, AMlow);
+AudioConnection          patchCord9(AMlow, 0, Volume, 1);
+AudioConnection          patchCord10(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord11(BandWidth, rms1);
+AudioConnection          patchCord12(BandWidth, peak1);
+//AudioConnection          patchCord12(Sub_SSB, peak1);      // does moving two connections fix it : No
+                                                             // does moving peak1 instead of AMdet work : Yes
+AudioConnection          patchCord16(Sub_SSB,0, Volume, 3);  // does an extra connection to Volume work : Yes                                                         
+AudioConnection          patchCord13(BandWidth, AMdet);
+//AudioConnection          patchCord13(Sub_SSB,AMdet);        // does this change break this version : Yes
+                                                              // does it work :  No
+AudioConnection          patchCord14(SideTone, 0, Volume, 2);
+AudioConnection          patchCord15(Volume, dac1);
+// GUItool: end automatically generated code
+*/
+
+/*
+// this version works
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=72.85714721679688,257.85714626312256
+AudioMixer4              RxTx2;          //xy=260.8571472167969,324.5714340209961
+AudioMixer4              RxTx1;          //xy=262.8571472167969,206.5714340209961
+AudioFilterFIR           Qm00;           //xy=398.8571472167969,323.5714340209961
+AudioFilterFIR           Ip90;           //xy=401.8571472167969,206.5714340209961
+AudioMixer4              Sub_SSB;        //xy=581.8571472167969,261.5714340209961
+AudioEffectRectifier     AMdet;          //xy=582.8571472167969,332.5714340209961
+AudioFilterFIR           AMlow;          //xy=709.8571472167969,330.5714340209961
+AudioFilterBiquad        BandWidth;      //xy=755.8571472167969,245.5714340209961
+AudioAnalyzePeak         peak1;          //xy=762.8572120666504,115.71424007415771
+AudioSynthWaveformSine   SideTone;       //xy=797.8571472167969,383.5714340209961
+AudioAnalyzeRMS          rms1;           //xy=911.8571472167969,182.5714340209961
+AudioMixer4              Volume;         //xy=953.2857208251953,265.42857551574707
+AudioOutputAnalog        dac1;           //xy=1051.2857208251953,181.00000476837158
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 1, RxTx2, 0);
+AudioConnection          patchCord3(RxTx2, Qm00);
+AudioConnection          patchCord4(RxTx1, Ip90);
+AudioConnection          patchCord5(Qm00, 0, Sub_SSB, 2);
+AudioConnection          patchCord6(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord7(Sub_SSB, BandWidth);
+AudioConnection          patchCord8(AMdet, AMlow);
+AudioConnection          patchCord9(AMlow, 0, Volume, 1);
+AudioConnection          patchCord10(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord11(BandWidth, rms1);
+AudioConnection          patchCord12(BandWidth, peak1);
+//AudioConnection          patchCord13(BandWidth, AMdet);      // moving this patch cord 
+AudioConnection          patchCord13(Sub_SSB,AMdet);           // does this break it: yes
+AudioConnection          patchCord14(SideTone, 0, Volume, 2);
+AudioConnection          patchCord15(Volume, dac1);
+// GUItool: end automatically generated code
+*/
+/*
+
+
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=72.85714721679688,257.85714626312256
+AudioMixer4              RxTx2;          //xy=260.8571472167969,324.5714340209961
+AudioMixer4              RxTx1;          //xy=262.8571472167969,206.5714340209961
+AudioFilterFIR           Qm00;           //xy=398.8571472167969,323.5714340209961
+AudioFilterFIR           Ip90;           //xy=401.8571472167969,206.5714340209961
+AudioMixer4              Sub_SSB;        //xy=581.8571472167969,261.5714340209961
+AudioEffectRectifier     AMdet;          //xy=582.8571472167969,332.5714340209961
+AudioFilterFIR           AMlow;          //xy=709.8571472167969,330.5714340209961
+AudioFilterBiquad        BandWidth;      //xy=755.8571472167969,245.5714340209961
+AudioAnalyzePeak         peak1;          //xy=792.8571968078613,119.99995613098145
+AudioSynthWaveformSine   SideTone;       //xy=797.8571472167969,383.5714340209961
+AudioAnalyzeRMS          rms1;           //xy=911.8571472167969,182.5714340209961
+AudioMixer4              Volume;         //xy=911.8571472167969,262.5714340209961
+AudioOutputAnalog        dac1;           //xy=1049.8571472167969,219.5714340209961
+AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
+AudioConnection          patchCord2(adcs1, 1, RxTx2, 0);
+AudioConnection          patchCord3(RxTx2, Qm00);
+AudioConnection          patchCord4(RxTx1, Ip90);
+AudioConnection          patchCord5(Qm00, 0, Sub_SSB, 2);
+AudioConnection          patchCord6(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord7(Sub_SSB, AMdet);
+AudioConnection          patchCord8(Sub_SSB, BandWidth);
+AudioConnection          patchCord9(adcs1,0, peak1, 0);
+AudioConnection          patchCord10(AMdet, AMlow);
+AudioConnection          patchCord11(AMlow, 0, Volume, 1);
+AudioConnection          patchCord12(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord13(BandWidth, rms1);
+AudioConnection          patchCord14(SideTone, 0, Volume, 2);
+AudioConnection          patchCord15(Volume, dac1);
+// GUItool: end automatically generated code
+*/
+/*
+// GUItool: begin automatically generated code
+//AudioInputUSB            usb2;           //xy=72.57143020629883,176.57144355773926
+AudioInputAnalogStereo   adcs1;          //xy=72.85714721679688,257.85714626312256
+AudioAnalyzePeak         peak1;          //xy=142.8571662902832,377.14282608032227
+AudioMixer4              RxTx2;          //xy=260.8571472167969,324.5714340209961
+AudioMixer4              RxTx1;          //xy=262.8571472167969,206.5714340209961
+AudioFilterFIR           Qm00;           //xy=398.8571472167969,323.5714340209961
+AudioFilterFIR           Ip90;           //xy=401.8571472167969,206.5714340209961
+AudioMixer4              Sub_SSB;        //xy=581.8571472167969,261.5714340209961
+AudioEffectRectifier     AMdet;          //xy=582.8571472167969,332.5714340209961
+//AudioMixer4              MagPhase;       //xy=609.8571472167969,163.5714340209961
+AudioFilterFIR           AMlow;          //xy=709.8571472167969,330.5714340209961
+AudioFilterBiquad        BandWidth;      //xy=755.8571472167969,245.5714340209961
+AudioSynthWaveformSine   SideTone;       //xy=797.8571472167969,383.5714340209961
+AudioAnalyzeRMS          rms1;           //xy=911.8571472167969,182.5714340209961
+AudioMixer4              Volume;         //xy=911.8571472167969,262.5714340209961
+AudioOutputAnalog        dac1;           //xy=1049.8571472167969,219.5714340209961
+//AudioOutputUSB           usb1;           //xy=1054.8571472167969,302.5714340209961
+//AudioConnection          patchCord1(usb2, 0, RxTx1, 2);
+//AudioConnection          patchCord2(usb2, 1, RxTx2, 2);
+AudioConnection          patchCord3(adcs1, 0, RxTx1, 0);
+//AudioConnection          patchCord4(adcs1, 0, RxTx2, 1);
+AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
+AudioConnection          patchCord6(adcs1, 1, peak1, 0);
+AudioConnection          patchCord7(RxTx2, Qm00);
+AudioConnection          patchCord8(RxTx1, Ip90);
+//AudioConnection          patchCord9(Qm00, 0, MagPhase, 1);
+AudioConnection          patchCord10(Qm00, 0, Sub_SSB, 2);
+//AudioConnection          patchCord11(Ip90, 0, MagPhase, 0);
+AudioConnection          patchCord12(Ip90, 0, Sub_SSB, 1);
+AudioConnection          patchCord13(Sub_SSB, AMdet);
+AudioConnection          patchCord14(Sub_SSB, BandWidth);
+AudioConnection          patchCord15(AMdet, AMlow);
+AudioConnection          patchCord16(AMlow, 0, Volume, 1);
+AudioConnection          patchCord17(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord18(BandWidth, rms1);
+AudioConnection          patchCord19(SideTone, 0, Volume, 2);
+AudioConnection          patchCord20(Volume, dac1);
+//AudioConnection          patchCord21(Volume, 0, usb1, 0);
+//AudioConnection          patchCord22(Volume, 0, usb1, 1);
+// GUItool: end automatically generated code
+*/
 
 
 
@@ -449,6 +667,41 @@ static SI5351 si5351;
 
 //***********************************************************
 
+int eer_count;
+int temp_count;          // !!! debug
+int eer_adj;             // !!! debug
+float eer_time = 90.668;  // us for each sample
+void EER_function(){     // transmit interrupt function.  Interval timer.
+int c;
+
+   if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data
+      eer_count = 0;
+      return;
+   }
+
+   ++eer_count;
+   eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
+
+   // adjust timing
+   int u = 0;
+   if( eer_count == 0 ){
+      c = MagPhase.read_count();
+      temp_count = c;               // !!! debug
+      //if( c == 64 ) return;
+      if( c == 32 ) eer_time += 0.001, ++eer_adj, ++u;    // slow down
+      if( c == 96 ) eer_time -= 0.001, --eer_adj, ++u;    // speed up
+         // leak timer toward what we think is correct 90.675  Drift with temperature?
+      if( eer_time > 90.68 ) eer_time -= 0.0001, ++u;
+      if( eer_time < 90.67 ) eer_time += 0.0001, ++u;
+      if( u ) EER_timer.update( eer_time);
+   }
+
+   // leak timer toward what we think is correct 90.670.  Drift with temperature?
+  // if( eer_time > 90.675 ) eer_time -= 0.00001, ++u;
+  // if( eer_time < 90.665 ) eer_time += 0.00001, ++u;
+  // if( u ) EER_timer.update( eer_time);
+}
+
 void setup() {
    int contrast = 68;
 
@@ -485,11 +738,13 @@ void setup() {
 // Audio Library setup
   AudioNoInterrupts();
   AudioMemory(40);
+ // AudioMemory(80);       // no help with no-decode issue
   
   Sub_SSB.gain(1,1.0);   // correct sideband
-  Sub_SSB.gain(2,-1.0);
+  Sub_SSB.gain(2,1.0);
   Sub_SSB.gain(0,0.0);
   Sub_SSB.gain(3,0.0);
+
 
   RxTx1.gain(0,1.0);     // audio mux's
   RxTx2.gain(0,1.0);     // Rx = 0, Tx mic = 1, Tx usb = 2
@@ -499,6 +754,9 @@ void setup() {
   RxTx2.gain(1,0.0);
   RxTx2.gain(2,0.0);
   RxTx2.gain(3,0.0);
+  
+//  agc1.gain(1.0);
+//  agc2.gain(1.0);
 
   // 0.54119610   butterworth Q's two cascade
   // 1.3065630
@@ -513,6 +771,7 @@ void setup() {
   set_bandwidth();
   Ip90.begin(SSBp90,64);
   Qm00.begin(SSBm00,64);
+  qsy(freq);
 
   AudioInterrupts();
 
@@ -532,8 +791,8 @@ int bw;                              // or bandwidth changed in menu's.
 
    bw = 3300;                        // remove warning uninitialized variable
    switch( filter ){
-       case 0: bw = 2200; break;     // data duplicated from menu strings.  Could be improved so that
-       case 1: bw = 2200; break;     // one doesn't need to maintain data in two places if changes are made.
+       case 0: bw = 300; break;     // data duplicated from menu strings.  Could be improved so that
+       case 1: bw = 700; break;     // one doesn't need to maintain data in two places if changes are made.
        case 2: bw = 2700; break;
        case 3: bw = 3000; break;
        case 4: bw = 3300; break;
@@ -577,12 +836,12 @@ void set_af_gain(float g){
 }
 
 void set_agc_gain(float g ){
-   // try front end gain agc again
-   // agc_amp.gain(g);
-   //agc_amp.gain(1.0);
+                          // agc might possibly work for microphone compression if adjust other channels when appropriate
   AudioNoInterrupts();
     RxTx1.gain(0,g);     // audio mux's
     RxTx2.gain(0,g);     // Rx = 0, Tx mic = 1, Tx usb = 2
+//    agc1.gain(g);
+//    agc2.gain(g);
   AudioInterrupts();
 }
 
@@ -677,7 +936,7 @@ int bw;                              // or bandwidth changed in menu's.
      Q_filter.setHighpass(3,250-100*filter,1.3065630); 
      
     
-    /*
+    
      I_filter.setLowpass(0,bfo,0.51763809);       // filters are set to a value without distortion
      I_filter.setLowpass(1,bfo,0.70710678);       // with Butterworth Q's for 3 cascade
      I_filter.setLowpass(2,bfo,1.9318517);        
@@ -711,12 +970,17 @@ int bw;                              // or bandwidth changed in menu's.
 void tx(){
   // what needs to change to enter tx mode
   // audio mux switching, tx bandwidth, pwm, SI5351 clocks on/off, I2C speed change, ...
+
+  EER_timer.begin(EER_function,eer_time);
+  MagPhase.setmode(1);
   
 }
 
 void rx(){
   // what needs to change to return to rx mode.
-  
+  EER_timer.end();
+  MagPhase.setmode(0);
+ 
 }
 
 
@@ -738,57 +1002,47 @@ int i;
 
 void loop() {
 static uint32_t tm;
-static int t2;            // distribute some processing
 int t;  
 
-   // i2poll();
+
+   t = encoder();
+   if( t ){
+      if( encoder_user == MENUS ) top_menu(t);
+      if( encoder_user == FREQ ){
+         qsy( freq + (t * step_ ));
+         freq_display();
+      }
+      if( encoder_user == VOLUME ) volume_adjust(t);
+   }
+
+      // agc
+   if( rms1.available() ){  
+        sig_rms = rms1.read();
+        agc_process( sig_rms);
+        report_peaks();
+   }
+
 
    //  1 ms routines
    if( tm != millis()){ 
- //t = (int) (millis() - tm);
- // OLD.printNumI(t,RIGHT,ROW6,3,' ');
       tm = millis();
-      if( step_timer ) --step_timer;       // dtap step up to 500k enable 
+      if( step_timer ) --step_timer;       // 1.5 seconds to dtap freq step up to 500k 
       
-      t = encoder();
-      if( t ){
-         if( encoder_user == MENUS ) top_menu(t);
-         if( encoder_user == FREQ ){
-            qsy( freq + (t * step_ ));
-            freq_display();
-         }
-         if( encoder_user == VOLUME ) volume_adjust(t);
-      }
-
       t = button_state(0);
       if( t > DONE ) button_process(t);
 
-      // agc
-      if( rms1.available() ) t2 = 3;          // flag to process on a different time tick
-
-      // testing
-      // report_peaks();
-   }
-
-   if( t2 ){
-     --t2;
-     if( t2 == 1 ){
-        sig_usb = rms1.read();
-        agc_process( sig_usb);
-        report_peaks();
-     }
-    // if( t2 == 0 && mode == AM ) aft_process();
    }
    
 }
 
 void report_peaks(){
-static int count;
+static int count;              // !!! think about PWM'ing the RX pin for part of AGC process
 
   if( ++count < 1000 ) return;            // once a second
   if( encoder_user != FREQ ) return;
   count = 0;
 
+  eer_test();
 /*
   LCD.print((char *)"Adc ",0,ROW3);
   LCD.print((char *)"H45 ",0,ROW4);
@@ -803,6 +1057,22 @@ static int count;
  //  LCD.printNumF( peak2.read(),2,4*6,ROW5);
 }
 
+
+void eer_test(){      // !!! debug
+static int sec;
+
+   Serial.print(sec);   Serial.write(' ');
+   Serial.print(eer_adj); Serial.write(' ');
+   Serial.print(temp_count); Serial.write(' ');
+   Serial.println( eer_time,5 );
+   LCD.printNumF(eer_time,5,0,ROW3);
+
+   eer_adj = 0;
+   if( sec == 60 ) sec = 0;
+   if( sec == 10 ) tx();
+   if( sec == 59 ) rx();
+   ++sec;
+}
 
 void button_process( int t ){
 
@@ -892,13 +1162,13 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
 
     freq = f;
     //    noInterrupts();
-    if( mode >= AM ) si5351.freq(freq-9000,0,90);  // tune one sideband
+    if( mode == AM ) si5351.freq(freq-9000,0,90);  // tune one sideband on IF 7k to 11k
     else if(mode == CW){
       si5351.freq(freq + cw_offset, 90, 0);  // RX in LSB
       si5351.freq_calc_fast(-cw_offset); si5351.SendPLLBRegisterBulk(); // TX at freq
     }
     else if(mode == LSB) si5351.freq(freq, 90, 0);  // RX in LSB
-    else si5351.freq(freq, 0, 90);  // RX in USB, AM
+    else si5351.freq(freq, 0, 90);  // RX in USB
     //interrupts();
     
     //freq_display();     // need to delay screen update until after menu_cleanup
@@ -987,19 +1257,23 @@ this is all wrong now !!!
 
 // turn on / off the Fir filters for AM mode
 void AMon(){
+  AudioNoInterrupts();
     Ip90.end();
     Qm00.end();
     Ip90.begin(AMp90,34);
     Qm00.begin(AMm00,34);
     AMlow.begin(AMlowpass,30);
+  AudioInterrupts();
 }
 
 void AMoff(){
-   Ip90.end();
-   Qm00.end();
-   AMlow.end();
-   Ip90.begin(SSBp90,64);
-   Qm00.begin(SSBm00,64);
+  AudioNoInterrupts();
+    Ip90.end();
+    Qm00.end();
+    AMlow.end();
+    Ip90.begin(SSBp90,64);
+    Qm00.begin(SSBm00,64);
+  AudioInterrupts();  
 }
 
 void menu_cleanup(){
@@ -1063,7 +1337,7 @@ int ch;                            // flag change needed
         LCD.printNumI((int)(sig * 100.0),RIGHT,ROW0,3,' '); 
       }   
        g = 1.0 - sig + AGC_FLOOR;
-       set_agc_gain( g * agc_gain );                    // back end gain.  Only manual agc_gain can increase it.
+       set_agc_gain( g * agc_gain );                  // front end gain.  Only manual agc_gain can increase it.
     }                                                 // AGC can only decrease it.
                                                       // may have to adjust FLOOR with manual agc_gain changes.
 }                                                     // see how this works first.
@@ -1411,6 +1685,26 @@ static int data;
    if( i2in != i2out ) return (state + 8);
    else return state;
 }
+/*
+  * peak magnitude estimation ( derek rowell )
+  *   0.960433870103 * maxIQ + 0.3978247347593 * minIQ
+  *   Testing
+  *   sqrt ( 12*12 + 7*7 ) is 13.892
+  *   0.9604 * 12 + 0.3978 * 7 is 14.3
+  *   Q15 version: 31470 * 12  +  13035 * 7   =  468,885 then shift by 15 = 14 ( 1110 )
+  *   
+  *   QCX-SSB method:  maxIQ + 1/4 minIQ
+  *   12 + 7/4 = 13
+  *   bigger numbers
+  *      314  223    sqrt --> 385
+  *      314 + 223/4 = 369
+  *  Q15             = 390
+  *      314 + 223/4 + 223/8 = 397
+  *      314 - 314/32 + 223/4 + 223/8 = 387
+  *      314 * 31 / 32 + 223 * 3 / 8  using shifts for dividing may be promising, 2 mults, 2 shifts, 1 add.
+  *      (31 * 314) >> 5 + (3 * 223) >> 3    try this one.  
+  *      (abs(I) * 31) >> 5 + (abs(Q) * 3 ) >> 3 where I > Q
+  */
 
 
 #endif
