@@ -25,6 +25,7 @@
  */
 
 // find the magnitude and phase of the transmit audio I and Q streams
+// decimate by 6 version
 
 #include <Arduino.h>
 #include "MagPhase.h"
@@ -47,12 +48,11 @@ static int32_t fastAM( int32_t i, int32_t q ){
        q = ( 3 * q) >> 3;
     }
     return ( i + q );
-
 }
 
-static int32_t arctan3( int32_t q, int32_t i ){   // from QCX-SSB code
+static int32_t arctan3( int32_t q, int32_t i ){           // from QCX-SSB code
 
-  #define _UA  44117/8                                    // !!! just guessing here, half of our sample rate
+  #define _UA  44117/12                                    // !!! just guessing here, half of our sample rate
   #define _atan2(z)  ((_UA/8 - _UA/22 * z + _UA/22) * z)  //derived from (5) [1], see QCX-SSB project for reference quoted
   
   int32_t r;
@@ -60,9 +60,9 @@ static int32_t arctan3( int32_t q, int32_t i ){   // from QCX-SSB code
 
   ai = abs(i);  aq = abs(q);
   if( aq > ai )   r = _UA / 4 - _atan2( ai / aq );  // arctan(z) = 90-arctan(1/z)
-  else r = (i == 0) ? 0 : _atan2( aq / ai );      // arctan(z)
-  r = (i < 0) ? _UA / 2 - r : r;                  // arctan(-z) = -arctan(z)
-  return (q < 0) ? -r : r;                        // arctan(-z) = -arctan(z)
+  else r = (i == 0) ? 0 : _atan2( aq / ai );        // arctan(z)
+  r = (i < 0) ? _UA / 2 - r : r;                    // arctan(-z) = -arctan(z)
+  return (q < 0) ? -r : r;                          // arctan(-z) = -arctan(z)
 }
 
 
@@ -72,6 +72,7 @@ void AudioMagPhase2::update(void){
     int32_t val1, val2;
     int16_t *dat1, *dat2;
     int i;
+    static int rem;                  // 128 by 6 has a remainder when done
 
     // receiving, do nothing
     if( mode == 0 ){
@@ -91,19 +92,25 @@ void AudioMagPhase2::update(void){
        return;
     }
     
-    // decimate by 4, sample rate 11k, input must be lowpassed < 5k
+    // decimate by 6, sample rate 7353, input must be lowpassed < 3.5k
     dat1 = blk1->data;
     dat2 = blk2->data;
-    for( i = 0; i < AUDIO_BLOCK_SAMPLES; i += 4 ){
-           //val1 = *dat1 >> 1;   val2 = *dat2 >> 1;           // scale to avoid overflow in square values added
-        val1 = (int32_t) *dat1;   val2 = (int32_t) *dat2;      // cast just to show what is happening, use native 32 bit int            
-        mag[count] = fastAM( val1, val2);                      // think will want just 12 bits for PWM
-        ph[count]  =  arctan3( val2, val1 );
+    for( i = 0; i < AUDIO_BLOCK_SAMPLES; i++ ){
 
-        ++count;    count &=  (AUDIO_BLOCK_SAMPLES-1);     // assume power of two block size ( currently 128 )
-        dat1 += 4; dat2 += 4;                                              
+        ++rem;
+        if( rem == 6 ){
+           rem = 0;  
+        
+           //val1 = *dat1 >> 1;   val2 = *dat2 >> 1;           // scale to avoid overflow in square values added
+           val1 = (int32_t) *dat1;   val2 = (int32_t) *dat2;      // cast just to show what is happening, use native 32 bit int            
+           mag[count] = fastAM( val1, val2);
+           ph[count]  =  arctan3( val2, val1 );
+           ++count;    count &=  (AUDIO_BLOCK_SAMPLES-1);     // assume power of two block size ( currently 128 )
+        }
+        dat1 += 1; dat2 += 1;                                              
     }
-    if( count >= AUDIO_BLOCK_SAMPLES / 2 ) avail = 1;         // have buffered 6ms of data, avail latches on
+    if( count >= AUDIO_BLOCK_SAMPLES / 2 ) avail = 1;         // have buffered > 6ms of data, avail latches on
+    report_count = count;                                     // only report the block ending position of the count
     release( blk1 );
     release( blk2 );
 }

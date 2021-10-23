@@ -24,8 +24,6 @@
  * THE SOFTWARE.
  */
 
-// !!! to do:  will probably need some way to keep from reading results out too fast or too slow
-
 #ifndef MG_phase_h_
 #define MG_phase_h_
 
@@ -37,14 +35,14 @@ class AudioMagPhase2 : public AudioStream
 
 public:
 	AudioMagPhase2(void) : AudioStream(2, inputQueueArray) {
-		//for (int i=0; i<4; i++) multiplier[i] = 256;
+
 	}
  
 	virtual void update(void);
   
 	void setmode( int m ){
 		mode = m;
-    count = avail = 0;                  // reset all on mode change
+    report_count = count = avail = 0;                  // reset all on mode change
 	}
  
   int available(){
@@ -60,7 +58,7 @@ public:
   }
 
   int read_count(){
-    return count;
+    return report_count;
   }
   
 private:
@@ -69,6 +67,7 @@ private:
   int mag[AUDIO_BLOCK_SAMPLES];         // 4 blocks of out samples 12ms long
   int  ph[AUDIO_BLOCK_SAMPLES];         // at decimation rate of 4
   int count;                            // data in index
+  int report_count;                     // report the block ending count
   int avail;                            // becomes true when we have buffered 6ms of data
 };
 

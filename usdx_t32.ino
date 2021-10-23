@@ -12,7 +12,7 @@
  *     libraries are based on the same code from Rinky Dink Electronics.
  *     
  *     
- * Change log:     
+ * Change/Progress log:     
  *    Version 1.0   Initial testing with a Weaver receiver.
  *    Version 1.2   Added provision for AGC and AM detector.  Renamed some audio objects.
  *    Version 1.21  New AM decoder.
@@ -36,11 +36,13 @@
  *                  Teensyduino install.
  *    Version 1.40  Wrote MagPhase object to extract data from the Audio library stream to use for transmitting.  Set _UA at             
  *                  44117/8 for initial testing.
+ *    Version 1.41  I2C did not support sample rate 1/4 of 44k ( 11k ) for TX.  Changed MagPhase to use 1/6 rate or  7352. It does           
+ *                  not divide evenly into 128 size buffer, but seems to be working ok.
  *    
  */
 
  
-#define VERSION 1.40
+#define VERSION 1.41
 
 /*
  * The encoder switch works like this:
@@ -185,8 +187,9 @@ int filter = 4;
 int step_timer;                // allows double tap to backup the freq step to 500k , command times out
                                // and returns to the normal double tap command ( volume )
 float af_gain = 0.3;
-float agc_gain = 1.0;           // above 1 perhaps not a good idea.
+float agc_gain = 1.0;          // above 1 perhaps not a good idea.
 float sig_rms;
+int transmitting;
 
 /******************************** Teensy Audio Library **********************************/ 
 
@@ -480,16 +483,18 @@ AudioConnection          patchCord20(Volume, dac1);
 // I2C functions that the OLED library expects to use.
 void i2init(){
 
-  Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR ?, dma takes a long time to reset the OLED. Both seem to work.
-  Wire.setClock(700000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
+  Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR 
+  Wire.setClock(818000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
                              // clock stretching may produce reduced speed if clock is way to fast for the devices.
-                             // may need a speed test or scope the scl sda to see what is really going on.
                              // Calc that 700k speed could maybe support a tx bandwidth of 5.5k at 11029 sample rate.
+                             // It doesn't.  Nor does 800k or 1000k.  Using 1/2 TX rate.
+                             // At 1/2 rate of 1/4 rate:  500k works.  Using 700k for some margin of error.  1/8 rate overall.
+                             // At 1/6 rate get some errors at 700k. Use 800k. Should have better TX quality at 1/6 rate.
 }
 
 void i2start( unsigned char adr ){
 
-  while( Wire.done() == 0 );      // still busy with last.  Need to block while still busy???.  Did we gain anything from std Wire?
+  while( Wire.done() == 0 );         // still busy with last transmission.  Need to block while still busy.
   Wire.beginTransmission( adr );
 
 }
@@ -667,39 +672,80 @@ static SI5351 si5351;
 
 //***********************************************************
 
+
+// the transmit process uses I2C in an interrupt context.  Must prevent other users from writing.  
+// No frequency changes or any OLED writes.  transmitting variable is used to disable large parts of the system.
+#define F_SAMP_TX 44117/6
+// #define F_SAMP_TX 44117/8      // half speed on phase
+#define _UA 44117/12            // match definition in MagPhase.cpp
+
 int eer_count;
 int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
-float eer_time = 90.668;  // us for each sample
-void EER_function(){     // transmit interrupt function.  Interval timer.
-int c;
+int overs;               // !!! debug
+// float eer_time = 90.680;  //90.668;  // us for each sample
+float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 ) 
 
-   if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data
+void EER_function(){     // EER transmit interrupt function.  Interval timer.
+int c;
+static int prev_phase;
+//static int lost_phase;   // half speed - save the phase missing and add them together.  Will this work?
+int phase_;
+int mag;
+
+   if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data( more now with 1/6 sample rate )
       eer_count = 0;
       return;
    }
 
+   // process Mag and Phase
+   phase_ = MagPhase.pvalue(eer_count);
+   int dp = phase_ - prev_phase;
+   prev_phase = phase_;
+ //  if( eer_count & 1 ) lost_phase = dp;
+ //  else{
+ //    dp += lost_phase;                         // just comment this line if doesn't work or try average of the two
+      if( dp < 0 ) dp = dp + _UA;               // probably should lowpass and decimate or try 2/3 rate
+      #ifdef MAX_DP
+        if(dp > MAX_DP){                        // dp should be less than half unit-angle in order to keep frequencies below F_SAMP_TX/2
+          prev_phase = phase_ - (dp - MAX_DP);  // substract restdp
+          dp = MAX_DP;
+        }
+      #endif
+      // dp *= F_SAMP_TX / _UA);           // careful here, watch that integer division doesn't result in zero
+     // dp >>= 1;                            // I think this may work, rather than * 2
+      if( dp > 3300 ) dp = 0;              // put errors on the carrier freq.
+      if( mode == LSB ) dp = -dp;
+      si5351.freq_calc_fast(dp);
+      if( Wire.done() )                    // crash all:  can't wait here while in ISR
+           si5351.SendPLLBRegisterBulk();
+           else ++overs;                   // !!! debug only : count missed transmissions  
+   
+   
+   mag = MagPhase.mvalue(eer_count);
+   
+
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
 
-   // adjust timing
+   // adjust timing.  MagPhase data counter reported will be 0, 32, 64, 96.
+   // we want to be reading out the data two blocks behind ( we decimated by 4, these blocks are 32 in length )
+   // testing at eer_count == zero, this test happens once per 12ms. 
+   // that is how it used to work.  Now decimating by 6 and each 3ms block of 128 results in 21 or 22 samples.
+   // So we are 3 blocks behind but that doesn't really matter for this sync routine.  We should still hit an index of 64 
+   // in the middle of the buffered data.
    int u = 0;
    if( eer_count == 0 ){
       c = MagPhase.read_count();
       temp_count = c;               // !!! debug
-      //if( c == 64 ) return;
-      if( c == 32 ) eer_time += 0.001, ++eer_adj, ++u;    // slow down
-      if( c == 96 ) eer_time -= 0.001, --eer_adj, ++u;    // speed up
-         // leak timer toward what we think is correct 90.675  Drift with temperature?
-      if( eer_time > 90.68 ) eer_time -= 0.0001, ++u;
-      if( eer_time < 90.67 ) eer_time += 0.0001, ++u;
+      //if( c == 64 ) ;                                    // two blocks delay is the goal
+      if( c <  64-8 ) eer_time += 0.0001, ++eer_adj, ++u;    // slow down
+      if( c > 64+8 ) eer_time -= 0.0001, --eer_adj, ++u;    // speed up
+         // leak timer toward what we think is correct (90.675 old value ) now 136.0 
+      if( eer_time > 136.01 ) eer_time -= 0.00001, ++u;   // (prev version) at 1/4 rate 90.67 to 90.68.  If use 90.681 the values hunt
+      if( eer_time < 135.99 ) eer_time += 0.00001, ++u;
       if( u ) EER_timer.update( eer_time);
    }
-
-   // leak timer toward what we think is correct 90.670.  Drift with temperature?
-  // if( eer_time > 90.675 ) eer_time -= 0.00001, ++u;
-  // if( eer_time < 90.665 ) eer_time += 0.00001, ++u;
-  // if( u ) EER_timer.update( eer_time);
 }
 
 void setup() {
@@ -970,7 +1016,7 @@ int bw;                              // or bandwidth changed in menu's.
 void tx(){
   // what needs to change to enter tx mode
   // audio mux switching, tx bandwidth, pwm, SI5351 clocks on/off, I2C speed change, ...
-
+  transmitting = 1;
   EER_timer.begin(EER_function,eer_time);
   MagPhase.setmode(1);
   
@@ -980,7 +1026,7 @@ void rx(){
   // what needs to change to return to rx mode.
   EER_timer.end();
   MagPhase.setmode(0);
- 
+  transmitting = 0;
 }
 
 
@@ -1064,18 +1110,24 @@ static int sec;
    Serial.print(sec);   Serial.write(' ');
    Serial.print(eer_adj); Serial.write(' ');
    Serial.print(temp_count); Serial.write(' ');
-   Serial.println( eer_time,5 );
+   Serial.print( eer_time,5 ); Serial.write(' ');
+   Serial.println( overs );
    LCD.printNumF(eer_time,5,0,ROW3);
 
-   eer_adj = 0;
+   eer_adj = 0; overs = 0;
    if( sec == 60 ) sec = 0;
-   if( sec == 10 ) tx();
-   if( sec == 59 ) rx();
+   //if( sec == 10 ) tx();
+   //if( sec == 59 ) rx();
    ++sec;
 }
 
 void button_process( int t ){
 
+    if( transmitting ){
+         rx();                   // abort tx on any ? do we want this or just return
+         return;
+    }
+    
     switch( t ){
       case TAP:
         if( encoder_user == MENUS ){
@@ -1160,6 +1212,7 @@ void volume_adjust( int val ){
 void qsy( uint32_t f ){
 static int cw_offset = 700;     // !!! make global ?, add to menu if want to change on the fly
 
+    if( transmitting ) return;  // can't use I2C for other purposes during transmit
     freq = f;
     //    noInterrupts();
     if( mode == AM ) si5351.freq(freq-9000,0,90);  // tune one sideband on IF 7k to 11k
@@ -1180,7 +1233,8 @@ const char modes[] = "CW LSBUSBAM ";
 char msg[4];
 char msg2[9];
 char buf[20];
-    
+
+    if( transmitting ) return;       // avoid OLED writes
     if( mode > 3 ) return;           //!!! how to handle memory tuning
     strncpy(msg,&modes[3*mode],3);
     msg[3] = 0;
@@ -1330,7 +1384,7 @@ int ch;                            // flag change needed
     }
 
     if( ch ){                                         // change needed
-      if( encoder_user == FREQ ){
+      if( encoder_user == FREQ && transmitting == 0 ){
         OLD.printNumF( sig,2,0,ROW6 );            // move these 4 lines to an S meter function
         OLD.printNumI( AudioProcessorUsage(),60,ROW6,3,' ');   // 0 to 100 percent.  More debug
         LCD.print((char *)"Sig ",84-6*6,ROW0);
@@ -1350,6 +1404,7 @@ static int last;       /* save the previous reading */
 int new_;              /* this reading */
 int b;
 
+   if( transmitting ) return 0;
    new_ = (digitalReadFast(EN_B) << 1 ) | digitalReadFast(EN_A);
    if( new_ == last ) return 0;       /* no change */
 
