@@ -484,12 +484,13 @@ AudioConnection          patchCord20(Volume, dac1);
 void i2init(){
 
   Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR 
-  Wire.setClock(818000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
+  Wire.setClock(800000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
                              // clock stretching may produce reduced speed if clock is way to fast for the devices.
                              // Calc that 700k speed could maybe support a tx bandwidth of 5.5k at 11029 sample rate.
-                             // It doesn't.  Nor does 800k or 1000k.  Using 1/2 TX rate.
+                             // It doesn't.  Nor does 800k or 1000k.
                              // At 1/2 rate of 1/4 rate:  500k works.  Using 700k for some margin of error.  1/8 rate overall.
                              // At 1/6 rate get some errors at 700k. Use 800k. Should have better TX quality at 1/6 rate.
+                             // At 1/5 rate get some errors at 1000k.  Think we should stay at 1/6 rate.
 }
 
 void i2start( unsigned char adr ){
@@ -675,16 +676,17 @@ static SI5351 si5351;
 
 // the transmit process uses I2C in an interrupt context.  Must prevent other users from writing.  
 // No frequency changes or any OLED writes.  transmitting variable is used to disable large parts of the system.
-#define F_SAMP_TX 44117/6
-// #define F_SAMP_TX 44117/8      // half speed on phase
-#define _UA 44117/12            // match definition in MagPhase.cpp
+#define DRATE 6                      // decimation rate used in MagPhase
+#define F_SAMP_TX 44117/DRATE
+#define _UA 44117/2*DRATE            // match definition in MagPhase.cpp
 
 int eer_count;
 int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
 int overs;               // !!! debug
-// float eer_time = 90.680;  //90.668;  // us for each sample
-float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 ) 
+// float eer_time = 90.680;  //90.668;  // us for each sample deci rate 4
+float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
+// float eer_time = 113.335;   // 1/5 rate
 
 void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
@@ -714,7 +716,7 @@ int mag;
       #endif
       // dp *= F_SAMP_TX / _UA);           // careful here, watch that integer division doesn't result in zero
      // dp >>= 1;                            // I think this may work, rather than * 2
-      if( dp > 3300 ) dp = 0;              // put errors on the carrier freq.
+     //if( dp > 3300 ) dp = 0;              // put errors on the carrier freq.
       if( mode == LSB ) dp = -dp;
       si5351.freq_calc_fast(dp);
       if( Wire.done() )                    // crash all:  can't wait here while in ISR
@@ -733,17 +735,20 @@ int mag;
    // testing at eer_count == zero, this test happens once per 12ms. 
    // that is how it used to work.  Now decimating by 6 and each 3ms block of 128 results in 21 or 22 samples.
    // So we are 3 blocks behind but that doesn't really matter for this sync routine.  We should still hit an index of 64 
-   // in the middle of the buffered data.
+   // in the middle of the buffered data.  And we changed it again for decimation rate 5.
    int u = 0;
    if( eer_count == 0 ){
       c = MagPhase.read_count();
       temp_count = c;               // !!! debug
       //if( c == 64 ) ;                                    // two blocks delay is the goal
-      if( c <  64-8 ) eer_time += 0.0001, ++eer_adj, ++u;    // slow down
-      if( c > 64+8 ) eer_time -= 0.0001, --eer_adj, ++u;    // speed up
-         // leak timer toward what we think is correct (90.675 old value ) now 136.0 
-      if( eer_time > 136.01 ) eer_time -= 0.00001, ++u;   // (prev version) at 1/4 rate 90.67 to 90.68.  If use 90.681 the values hunt
+      if( c <  64-8 ) eer_time += 0.0001, ++eer_adj, ++u;    // slow down  64-8 for prev versions.  76-8 for 1/5 rate.
+      if( c > 64+8 ) eer_time -= 0.0001, --eer_adj, ++u;    // speed up    64-8 rates 1/4 and 1/6
+     // leak timer toward what we think is correct
+      if( eer_time > 136.01 ) eer_time -= 0.00001, ++u;   //  rate 1/6 version.    version at 1/4 rate use 90.67 to 90.68.
       if( eer_time < 135.99 ) eer_time += 0.00001, ++u;
+     // if( eer_time > 113.34 ) eer_time -= 0.00001, ++u;     // rate 1/5 version
+     // if( eer_time < 113.33 ) eer_time += 0.00001, ++u;     // use 76 +-8 as index to sync
+      
       if( u ) EER_timer.update( eer_time);
    }
 }

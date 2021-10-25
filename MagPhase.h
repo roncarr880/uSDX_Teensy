@@ -37,13 +37,13 @@ public:
 	AudioMagPhase2(void) : AudioStream(2, inputQueueArray) {
 
 	}
- 
+	
 	virtual void update(void);
   
-	void setmode( int m ){
-		mode = m;
+  void setmode( int m ){
+    mode = m;
     report_count = count = avail = 0;                  // reset all on mode change
-	}
+  }
  
   int available(){
     return avail; 
@@ -62,8 +62,8 @@ public:
   }
   
 private:
-	int mode;
-	audio_block_t *inputQueueArray[2];
+  int mode;
+  audio_block_t *inputQueueArray[2];
   int mag[AUDIO_BLOCK_SAMPLES];         // 4 blocks of out samples 12ms long
   int  ph[AUDIO_BLOCK_SAMPLES];         // at decimation rate of 4
   int count;                            // data in index

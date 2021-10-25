@@ -25,7 +25,9 @@
  */
 
 // find the magnitude and phase of the transmit audio I and Q streams
-// decimate by 6 version
+// decimate by 6 version, or 5, or N
+
+#define DRATE 6
 
 #include <Arduino.h>
 #include "MagPhase.h"
@@ -52,7 +54,8 @@ static int32_t fastAM( int32_t i, int32_t q ){
 
 static int32_t arctan3( int32_t q, int32_t i ){           // from QCX-SSB code
 
-  #define _UA  44117/12                                    // !!! just guessing here, half of our sample rate
+  //#define _UA  44117/12                                   // just guessing here, half of our sample rate
+  #define _UA  44117/2*DRATE
   #define _atan2(z)  ((_UA/8 - _UA/22 * z + _UA/22) * z)  //derived from (5) [1], see QCX-SSB project for reference quoted
   
   int32_t r;
@@ -92,13 +95,13 @@ void AudioMagPhase2::update(void){
        return;
     }
     
-    // decimate by 6, sample rate 7353, input must be lowpassed < 3.5k
+    // decimate by DRATE, 6-> sample rate 7353, input must be lowpassed < 3.5k
     dat1 = blk1->data;
     dat2 = blk2->data;
     for( i = 0; i < AUDIO_BLOCK_SAMPLES; i++ ){
 
         ++rem;
-        if( rem == 6 ){
+        if( rem == DRATE ){
            rem = 0;  
         
            //val1 = *dat1 >> 1;   val2 = *dat2 >> 1;           // scale to avoid overflow in square values added
