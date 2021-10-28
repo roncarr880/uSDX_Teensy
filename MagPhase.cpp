@@ -25,16 +25,18 @@
  */
 
 // find the magnitude and phase of the transmit audio I and Q streams
-// decimate by 6 version, or 5, or N
+// it seems the general idea here is conversion from XY cartesian to polar form
+// decimate by N version
 
-#define DRATE 6
+#define DRATE 6              // decimation rate.  Input should be lowpass filtered appropriately.
 
 #include <Arduino.h>
 #include "MagPhase.h"
 #include "utility/dspinst.h"
 
 
-
+ static int32_t val1, val2;
+ 
     //  approx magnitude of I and Q channels
     //  31 * I / 32  + 3 * Q / 8 where I > Q
 // estimated async complex square law    
@@ -54,8 +56,9 @@ static int32_t fastAM( int32_t i, int32_t q ){
 
 static int32_t arctan3( int32_t q, int32_t i ){           // from QCX-SSB code
 
-  //#define _UA  44117/12                                   // just guessing here, half of our sample rate
-  #define _UA  44117/2*DRATE
+
+  // #define _UA  44117/(2*DRATE)
+  #define _UA 8448                                  // arbitrary number, common mult of 8 and 22
   #define _atan2(z)  ((_UA/8 - _UA/22 * z + _UA/22) * z)  //derived from (5) [1], see QCX-SSB project for reference quoted
   
   int32_t r;
@@ -69,11 +72,34 @@ static int32_t arctan3( int32_t q, int32_t i ){           // from QCX-SSB code
 }
 
 
-void AudioMagPhase2::update(void){ 
+// a 31 tap classic hilbert every other constant is zero
+static void process_hilbert( int16_t val ){
+static int32_t wi[31];                                // delay terms
+static int32_t wq[31];
+const int32_t k0 = (int32_t)( 32767.5 * 0.002972769320862211 );
+const int32_t k1 = (int32_t)( 32767.5 * 0.008171666650726522 );
+const int32_t k2 = (int32_t)( 32767.5 * 0.017465643081957562 );
+const int32_t k3 = (int32_t)( 32767.5 * 0.032878923709314147 );
+const int32_t k4 = (int32_t)( 32767.5 * 0.058021930268698417 );
+const int32_t k5 = (int32_t)( 32767.5 * 0.101629404192315698 );
+const int32_t k6 = (int32_t)( 32767.5 * 0.195583262432201366 );
+const int32_t k7 = (int32_t)( 32767.5 * 0.629544595185021816 );
 
-    audio_block_t *blk1, *blk2;
-    int32_t val1, val2;
-    int16_t *dat1, *dat2;
+   for( int i = 0; i < 30; ++i )  wi[i] = wi[i+1],  wq[i] = wq[i+1];
+   wi[30] = wq[30] = val;
+
+   val2 = wq[15];
+   val1 =  k0 * ( wi[0] - wi[30] ) + k1 * ( wi[2] - wi[28] ) + k2 * ( wi[4] - wi[26] ) + k3 * ( wi[6] - wi[24] );
+   val1 += k4 * ( wi[8] - wi[22] ) + k5 * ( wi[10] - wi[20]) + k6 * ( wi[12] - wi[18]) + k7 * ( wi[14] - wi[16]);
+   val1 >>= 15;
+
+}
+
+
+void AudioMagPhase1::update(void){ 
+
+    audio_block_t *blk1;
+    int16_t *dat1;
     int i;
     static int rem;                  // 128 by 6 has a remainder when done
 
@@ -81,39 +107,33 @@ void AudioMagPhase2::update(void){
     if( mode == 0 ){
       	blk1 = receiveReadOnly(0);
         if( blk1 ) release( blk1 );
-        blk2 = receiveReadOnly(1);
-        if( blk2 ) release( blk2 );
         return;
     }
 
     // transmitting
     blk1 = receiveReadOnly(0);
-    blk2 = receiveReadOnly(1);
-    if( blk1 == 0 || blk2 == 0 ){
-       if( blk1 ) release( blk1 );
-       if( blk2 ) release( blk2 );
+    if( blk1 == 0  ){
+       //release( blk1 );
        return;
     }
     
     // decimate by DRATE, 6-> sample rate 7353, input must be lowpassed < 3.5k
     dat1 = blk1->data;
-    dat2 = blk2->data;
+    
     for( i = 0; i < AUDIO_BLOCK_SAMPLES; i++ ){
 
         ++rem;
         if( rem == DRATE ){
            rem = 0;  
-        
-           //val1 = *dat1 >> 1;   val2 = *dat2 >> 1;           // scale to avoid overflow in square values added
-           val1 = (int32_t) *dat1;   val2 = (int32_t) *dat2;      // cast just to show what is happening, use native 32 bit int            
+
+           process_hilbert( *dat1 );                           // get val1 and val2            
            mag[count] = fastAM( val1, val2);
-           ph[count]  =  arctan3( val2, val1 );
+           ph[count]  =  arctan3( val1, val2 );
            ++count;    count &=  (AUDIO_BLOCK_SAMPLES-1);     // assume power of two block size ( currently 128 )
         }
-        dat1 += 1; dat2 += 1;                                              
+        dat1 += 1;                                              
     }
     if( count >= AUDIO_BLOCK_SAMPLES / 2 ) avail = 1;         // have buffered > 6ms of data, avail latches on
     report_count = count;                                     // only report the block ending position of the count
     release( blk1 );
-    release( blk2 );
 }

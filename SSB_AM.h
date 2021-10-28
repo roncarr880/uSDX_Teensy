@@ -24,17 +24,17 @@
  * THE SOFTWARE.
  */
 
-#ifndef MG_phase_h_
-#define MG_phase_h_
+#ifndef SSB_am_h_
+#define SSB_am_h_
 
 #include "Arduino.h"
 #include "AudioStream.h"
 
-class AudioMagPhase1 : public AudioStream
+class AudioSSB_AM2 : public AudioStream
 {
 
 public:
-	AudioMagPhase1(void) : AudioStream(1, inputQueueArray) {
+	AudioSSB_AM2(void) : AudioStream(2, inputQueueArray) {
 
 	}
 	
@@ -42,33 +42,11 @@ public:
   
   void setmode( int m ){
     mode = m;
-    report_count = count = avail = 0;                  // reset all on mode change
   }
- 
-  int available(){
-    return avail; 
-  }
-
-  int32_t mvalue( int i ){
-    return mag[i];
-  }
-
-  int32_t pvalue( int i ){
-    return ph[i];
-  }
-
-  int read_count(){
-    return report_count;
-  }
-  
+   
 private:
   int mode;
-  audio_block_t *inputQueueArray[1];
-  int mag[AUDIO_BLOCK_SAMPLES];         // 4 blocks of out samples 12ms long  |     6 blocks, 18ms long
-  int  ph[AUDIO_BLOCK_SAMPLES];         // at decimation rate of 4            |     at decimation rate of 6
-  int count;                            // data in index
-  int report_count;                     // report the block ending count
-  int avail;                            // becomes true when we have buffered 6ms of data
+  audio_block_t *inputQueueArray[2];
 };
 
 
