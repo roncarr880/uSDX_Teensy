@@ -46,17 +46,20 @@
  *                  audio object SSB_AM is no longer needed.  No AM mode for now.
  *    Version 1.45  Add an AM detector.  Double reset the Si5351 on band/mode changes as sometimes it seems out of sync.  Think              
  *                  this issue started when I added the dividers to the bandstack ( to run the Si5351 in spec for bands other than 80).
- *    
+ *    Version 1.46  CAT control using Argonaut V emulation.  Added USA band limits indication.  Made some changes to MagPhase, phase
+ *                  may or may not be better, magnitude is better. Added CW decoder. Added Digi mode that filters magnitude and phase
+ *                  on TX.  Changed _UA to be the TX sample rate as that seems simplest overall.  
  */
 
  
-#define VERSION 1.45
+#define VERSION 1.46
 
 /*
  * The encoder switch works like this:
  * A tap changes the tuning step with 1k, 100, 10 in rotation.
  *   To change to a larger tuning step, first tap then double tap within 1.5 seconds and select 5k, 50k, 500k steps with double taps.
  * Normally a double tap brings up the volume control.  When done adjusting, double tap back to normal turning.
+ *   Or single tap for RF gain control ( actually gain in the agc amps ), another tap for CW decoder level.
  * Long Press brings up the menu.  You can make selections with a tap.  Double tap exits.  And see sticky menus option below for 
  *   different behavior. 
  */
@@ -97,7 +100,7 @@
 #define USE_OLED
 #define USE_LCD
 
-#define DEBUG 1       // enables serial prints
+#define DEBUG_MP  0                  // serial print tx magnitude and phase data for arduino serial plotter
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
 // 84 x 48 pixels or 6 lines by 14 characters in text mode
@@ -115,6 +118,7 @@
 // #include "filters.h"
 // #include "SSB_AM.h"
 #include "AM_decode.h"
+#include "my_morse.h"
 
 
 extern unsigned char SmallFont[];
@@ -162,9 +166,10 @@ IntervalTimer EER_timer;
 int encoder_user;
 
 // volume users - general use of volume code
-#define MAX_VUSERS 2
-#define VOLUME_U 0
+#define MAX_VUSERS 3
+#define VOLUME_U   0
 #define AGC_GAIN_U 1
+#define CW_DET_U   2
 int volume_user;
 
 // Menus:  Long press to enter
@@ -180,22 +185,23 @@ struct BAND_STACK{
    // could expand to relay commands, step, filter width etc.  Whatever plays nicely.
 };
 
-// "CW", "LSB", "USB", "AM", "Mem Tune", "WSPR"  mem tune special, think will remove wspr from this radio
-#define CW 0
-#define LSB 1
-#define USB 2
-#define AM 3
+// "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune"    mem tune special
+#define CW   0
+#define LSB  1
+#define USB  2
+#define AM   3
+#define DIGI 4
 
 struct BAND_STACK bandstack[] = {    // index is the band
   { LSB ,  3928000, 1000, 126 },
-  { AM  ,  6000000, 5000, 126 },
+  { USB ,  5330500,  500, 126 },     // special 500 step otherwise not reachable
   { LSB ,  7163000, 1000, 100 },
   { CW  , 10105000,  100,  68 },
   { USB , 14100000, 1000,  54 },
-  { USB  ,18101000, 1000,  40 }
+  { USB  ,18110000, 1000,  40 }
 };
 
-uint32_t freq = 18104600L;     // probably should init these vars from the bandstack
+uint32_t freq = 18110000L;     // probably should init these vars from the bandstack
 int step_ = 1000;
 int band = 5;
 int mode = 2;
@@ -203,13 +209,20 @@ int filter = 4;
 int bfo;
 int magp;                      // !!! testing
 int php;                       // !!! testing phase print
+int32_t rav_df;                // digi mode tx filters
+int32_t rav_mag;
+int trigger_;                  // for debug using arduino plotter 
 
 int step_timer;                // allows double tap to backup the freq step to 500k , command times out
                                // and returns to the normal double tap command ( volume )
 float af_gain = 0.3;
-float agc_gain = 2.0;          // above 1 perhaps not a good idea.
+float agc_gain = 2.0;
 float sig_rms;
 int transmitting;
+float cw_det_val = 1.3;        // mark space detect, adjust in volume options ( double tap, single tap )
+
+
+#define stage(c) Serial.write(c)
 
 /******************************** Teensy Audio Library **********************************/ 
 
@@ -271,328 +284,6 @@ AudioConnection          patchCord23(Volume, dac1);
 //AudioConnection          patchCord25(Volume, 0, usb1, 1);
 // GUItool: end automatically generated code
 
-/*
-// Weaver RX with AM mode
-
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=293.2857666015625,469.6666030883789
-AudioAnalyzePeak         peak1;          //xy=339.2857131958008,138.80953216552734
-AudioAmplifier           agc1;           //xy=340.00002670288086,210.00001525878906
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioSynthWaveformSine   cosBFO;          //xy=462.8571319580078,271.42856788635254
-AudioSynthWaveformSine   sinBFO;          //xy=462.85718154907227,312.85711669921875
-AudioMixer4              TxSelect;          //xy=474.2857360839844,470.9166679382324
-AudioFilterBiquad        QLow;        //xy=476.78571701049805,366.25000762939453
-AudioFilterBiquad        ILow;        //xy=480.89284896850586,210.0000114440918
-AudioEffectMultiply      I_mixer;      //xy=648.5715065002441,207.1428565979004
-AudioMagPhase1           MagPhase;         //xy=650.5951614379883,443.21418952941895
-AudioEffectMultiply      Q_mixer;      //xy=651.4286041259766,359.99998664855957
-AudioMixer4              SSB;        //xy=712.5714683532715,280.3809986114502
-AudioSynthWaveformSine   SideTone;          //xy=807.142879486084,391.4285888671875
-AudioEffectRectifier     AMdet;       //xy=851.428653717041,335.71426582336426
-AudioAnalyzeRMS          rms1;           //xy=868.4643096923828,167.27380752563477
-AudioMixer4              Volume;         //xy=928.821403503418,246.02381134033203
-AudioFilterBiquad        AMLow;        //xy=978.5711822509766,335.7142753601074
-AudioOutputAnalog        dac1;           //xy=1099.1429824829102,215.52377700805664
-//AudioOutputUSB           usb1;           //xy=1099.857234954834,268.52381896972656
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord5(agc1, ILow);
-AudioConnection          patchCord6(agc2, QLow);
-AudioConnection          patchCord7(cosBFO, 0, I_mixer, 1);
-AudioConnection          patchCord8(sinBFO, 0, Q_mixer, 1);
-AudioConnection          patchCord9(TxSelect, 0, MagPhase, 0);
-AudioConnection          patchCord10(QLow, 0, Q_mixer, 0);
-AudioConnection          patchCord11(QLow, 0, TxSelect, 0);
-AudioConnection          patchCord12(ILow, 0, I_mixer, 0);
-AudioConnection          patchCord13(I_mixer, 0, SSB, 1);
-AudioConnection          patchCord14(Q_mixer, 0, SSB, 2);
-AudioConnection          patchCord15(SSB, rms1);
-AudioConnection          patchCord16(SSB, 0, Volume, 0);
-AudioConnection          patchCord17(SSB, AMdet);
-AudioConnection          patchCord18(SideTone, 0, Volume, 3);
-AudioConnection          patchCord19(SideTone, 0, TxSelect, 3);
-AudioConnection          patchCord20(AMdet, AMLow);
-AudioConnection          patchCord21(Volume, dac1);
-//AudioConnection          patchCord22(Volume, 0, usb1, 0);
-//AudioConnection          patchCord23(Volume, 0, usb1, 1);
-AudioConnection          patchCord24(AMLow, 0, Volume, 1);
-// GUItool: end automatically generated code
-*/
-/*
-// Weaver RX
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=293.2857666015625,469.6666030883789
-AudioAnalyzePeak         peak1;          //xy=339.2857131958008,138.80953216552734
-AudioAmplifier           agc1;           //xy=340.00002670288086,210.00001525878906
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioSynthWaveformSine   cosBFO;          //xy=462.8571319580078,271.42856788635254
-AudioSynthWaveformSine   sinBFO;          //xy=462.85718154907227,312.85711669921875
-AudioMixer4              TxSelect;          //xy=474.2857360839844,470.9166679382324
-AudioFilterBiquad        QLow;        //xy=476.78571701049805,366.25000762939453
-AudioFilterBiquad        ILow;        //xy=480.89284896850586,210.0000114440918
-AudioEffectMultiply      I_mixer;      //xy=648.5715065002441,207.1428565979004
-AudioEffectMultiply      Q_mixer;      //xy=651.4286041259766,359.99998664855957
-AudioMagPhase1           MagPhase;         //xy=654.8808555603027,466.0713005065918
-AudioMixer4              SSB;        //xy=803.9999923706055,274.6667060852051
-AudioSynthWaveformSine   SideTone;          //xy=805.7142333984375,345.71427154541016
-AudioAnalyzeRMS          rms1;           //xy=868.4643096923828,167.27380752563477
-AudioMixer4              Volume;         //xy=990.25,283.1666564941406
-AudioOutputAnalog        dac1;           //xy=1132.000015258789,262.6666703224182
-//AudioOutputUSB           usb1;           //xy=1137.000015258789,345.6666703224182
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord5(agc1, ILow);
-AudioConnection          patchCord6(agc2, QLow);
-AudioConnection          patchCord7(cosBFO, 0, I_mixer, 1);
-AudioConnection          patchCord8(sinBFO, 0, Q_mixer, 1);
-AudioConnection          patchCord9(TxSelect, 0, MagPhase, 0);
-AudioConnection          patchCord10(QLow, 0, Q_mixer, 0);
-AudioConnection          patchCord11(QLow, 0, TxSelect, 0);
-AudioConnection          patchCord12(ILow, 0, I_mixer, 0);
-AudioConnection          patchCord13(I_mixer, 0, SSB, 1);
-AudioConnection          patchCord14(Q_mixer, 0, SSB, 2);
-AudioConnection          patchCord15(SSB, rms1);
-AudioConnection          patchCord16(SSB, 0, Volume, 0);
-AudioConnection          patchCord17(SideTone, 0, Volume, 3);
-AudioConnection          patchCord18(SideTone, 0, TxSelect, 3);
-AudioConnection          patchCord19(Volume, dac1);
-//AudioConnection          patchCord20(Volume, 0, usb1, 0);
-//AudioConnection          patchCord21(Volume, 0, usb1, 1);
-// GUItool: end automatically generated code
-*/
-/*
-// Weaver RX
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=293.2857666015625,469.6666030883789
-AudioAnalyzePeak         peak1;          //xy=339.2857131958008,138.80953216552734
-AudioAmplifier           agc1;           //xy=340.00002670288086,210.00001525878906
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioMixer4              TxSelect;          //xy=474.2857360839844,470.9166679382324
-AudioFilterBiquad        QLow;        //xy=476.78571701049805,366.25000762939453
-AudioFilterBiquad        ILow;        //xy=480.89284896850586,210.0000114440918
-AudioSynthWaveformSine   cosBFO;          //xy=550,264.2857142857143
-AudioSynthWaveformSine   sinBFO;          //xy=551.428596496582,314.2857093811035
-AudioSynthWaveformSine   SideTone;
-AudioEffectMultiply      I_mixer;      //xy=648.5715065002441,207.1428565979004
-AudioMagPhase1           MagPhase;         //xy=649.1665802001953,470.3570365905762
-AudioEffectMultiply      Q_mixer;      //xy=651.4286041259766,359.99998664855957
-AudioMixer4              SSB;        //xy=803.9999923706055,274.6667060852051
-AudioAnalyzeRMS          rms1;           //xy=868.4643096923828,167.27380752563477
-AudioMixer4              Volume;         //xy=990.25,283.1666564941406
-AudioOutputAnalog        dac1;           //xy=1132.000015258789,262.6666703224182
-//AudioOutputUSB           usb1;           //xy=1137.000015258789,345.6666703224182
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord5(agc1, ILow);
-AudioConnection          patchCord6(agc2, QLow);
-AudioConnection          patchCord7(TxSelect, 0, MagPhase, 0);
-AudioConnection          patchCord8(QLow, 0, TxSelect, 0);
-AudioConnection          patchCord9(QLow, 0, Q_mixer, 0);
-AudioConnection          patchCord10(ILow, 0, I_mixer, 0);
-AudioConnection          patchCord11(cosBFO, 0, I_mixer, 1);
-AudioConnection          patchCord12(sinBFO, 0, Q_mixer, 1);
-AudioConnection          patchCord13(SideTone, 0, Volume, 3);
-AudioConnection          patchCord21(SideTone, 0, TxSelect, 3);
-AudioConnection          patchCord14(I_mixer, 0, SSB, 1);
-AudioConnection          patchCord15(Q_mixer, 0, SSB, 2);
-AudioConnection          patchCord16(SSB, rms1);
-AudioConnection          patchCord17(SSB, 0, Volume, 0);
-AudioConnection          patchCord18(Volume, dac1);
-//AudioConnection          patchCord19(Volume, 0, usb1, 0);
-//AudioConnection          patchCord20(Volume, 0, usb1, 1);
-// GUItool: end automatically generated code
-
-*/
-
-/*
-// 1/3 rate Hilbert with custom block SSB_AM and MagPhase at 1/6 rate
-// moving bandwidth control to front end.
-
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=253.28580474853516,458.23806285858154
-AudioAnalyzePeak         peak1;          //xy=340.7142753601074,185.95239639282227
-AudioAmplifier           agc1;           //xy=341.42857360839844,250.00000190734863
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioMixer4              TxSelect;          //xy=472.857177734375,458.05950927734375
-AudioFilterBiquad        QLow;        //xy=482.5,366.25
-AudioFilterBiquad        ILow;        //xy=483.75,250
-AudioMagPhase1           MagPhase;         //xy=656.3095092773438,474.6427917480469
-AudioSSB_AM2             SSB_AM;        //xy=664.0000152587891,304.6666703224182
-AudioAnalyzeRMS          rms1;           //xy=672.75,374.4166717529297
-AudioSynthWaveformSine   SideTone;       //xy=810.8333740234375,381.2499694824219
-AudioFilterBiquad        UpLow;        //xy=823.7500610351562,272.5
-AudioMixer4              Volume;         //xy=990.25,283.1666564941406
-AudioOutputAnalog        dac1;           //xy=1132.000015258789,262.6666703224182
-//AudioOutputUSB           usb1;           //xy=1137.000015258789,345.6666703224182
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord5(agc1, ILow);
-AudioConnection          patchCord6(agc2, QLow);
-AudioConnection          patchCord7(TxSelect, 0, MagPhase, 0);
-AudioConnection          patchCord8(QLow, 0, SSB_AM, 1);
-AudioConnection          patchCord9(QLow, 0, TxSelect, 0);
-AudioConnection          patchCord10(ILow, 0, SSB_AM, 0);
-AudioConnection          patchCord11(SSB_AM, UpLow);
-AudioConnection          patchCord12(SSB_AM, rms1);
-AudioConnection          patchCord13(SideTone, 0, Volume, 3);
-AudioConnection          patchCord14(SideTone, 0, TxSelect, 3);
-AudioConnection          patchCord15(UpLow, 0, Volume, 0);
-AudioConnection          patchCord16(Volume, dac1);
-//AudioConnection          patchCord17(Volume, 0, usb1, 0);
-//AudioConnection          patchCord18(Volume, 0, usb1, 1);
-// GUItool: end automatically generated code
-*/
-/*
-// 1/4 rate Hilbert followed by up sample by 4: custom blocks SSB_AM, MagPhase
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=253.28580474853516,458.23806285858154
-AudioAnalyzePeak         peak1;          //xy=340.7142753601074,185.95239639282227
-AudioAnalyzePeak         peak2;          // !!! added testing
-AudioAmplifier           agc1;           //xy=341.42857360839844,250.00000190734863
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioMixer4              TxSelect;          //xy=472.857177734375,458.05950927734375
-AudioFilterFIR           QLow;           //xy=481.00001525878906,366.6666703224182
-AudioFilterFIR           ILow;           //xy=484.00001525878906,249.6666703224182
-AudioSSB_AM2             SSB_AM;        //xy=664.0000152587891,304.6666703224182
-AudioMagPhase1           MagPhase;         //xy=673.8095512390137,457.14279556274414
-AudioSynthWaveformSine   SideTone;       //xy=808.3333740234375,353.7499694824219
-AudioFilterBiquad        BandWidth;        //xy=825,298.75
-AudioAnalyzeRMS          rms1;           //xy=994.0000152587891,225.6666703224182
-AudioMixer4              Volume;         //xy=994.0000152587891,305.6666703224182
-AudioOutputAnalog        dac1;           //xy=1132.000015258789,262.6666703224182
-//AudioOutputUSB           usb1;           //xy=1137.000015258789,345.6666703224182
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord5(agc1, ILow);
-AudioConnection          patchCord6(agc2, QLow);
-AudioConnection          patchCord7(TxSelect, 0, MagPhase, 0);
-AudioConnection          patchCord8(QLow, 0, SSB_AM, 1);
-AudioConnection          patchCord9(QLow, 0, TxSelect, 0);
-AudioConnection          patchCord10(ILow, 0, SSB_AM, 0);
-AudioConnection          patchCord11(SSB_AM, BandWidth);
-AudioConnection          patchCord12(SideTone, 0, Volume, 3);
-AudioConnection          patchCord13(SideTone, 0, TxSelect, 3);
-AudioConnection          patchCord14(BandWidth, 0, Volume, 0);
-AudioConnection          patchCord15(BandWidth, rms1);
-AudioConnection          patchCord16(Volume, dac1);
-//AudioConnection          patchCord17(Volume, 0, usb1, 0);
-//AudioConnection          patchCord18(Volume, 0, usb1, 1);
-AudioConnection          patchCord19(SSB_AM, peak2 );            // !!! test
-// GUItool: end automatically generated code
-
-*/
-
-/*
-// Hilbert version 
-
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=154.71432495117188,392.5237922668457
-AudioSynthWaveformSine   TxTest;          //xy=158.5714225769043,458.5714054107666
-AudioMixer4              TxSelect;          //xy=337.85715103149414,456.8095226287842
-AudioAnalyzePeak         peak1;          //xy=340.7142753601074,185.95239639282227
-AudioAmplifier           agc1;           //xy=341.42857360839844,250.00000190734863
-AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
-AudioFilterFIR           Qm00;           //xy=481.00001525878906,366.6666703224182
-AudioFilterFIR           Ip90;           //xy=484.00001525878906,249.6666703224182
-AudioFilterBiquad        TxLow;        //xy=491.42856216430664,458.5714359283447
-AudioMagPhase1           MagPhase;         //xy=647.1428718566895,477.1428699493408
-AudioMixer4              Add_SSB;        //xy=664.0000152587891,304.6666703224182
-AudioEffectRectifier     AMdet;          //xy=665.0000152587891,375.6666703224182
-AudioFilterFIR           AMlow;          //xy=792.0000152587891,373.6666703224182
-AudioFilterBiquad        BandWidth;      //xy=838.0000152587891,288.6666703224182
-AudioSynthWaveformSine   SideTone;       //xy=880.0000152587891,426.6666703224182
-AudioAnalyzeRMS          rms1;           //xy=994.0000152587891,225.6666703224182
-AudioMixer4              Volume;         //xy=994.0000152587891,305.6666703224182
-AudioOutputAnalog        dac1;           //xy=1132.000015258789,262.6666703224182
-//AudioOutputUSB           usb1;           //xy=1137.000015258789,345.6666703224182
-AudioConnection          patchCord1(adcs1, 0, peak1, 0);
-AudioConnection          patchCord2(adcs1, 0, agc1, 0);
-AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-AudioConnection          patchCord4(adcs1, 1, TxSelect, 0);
-//AudioConnection          patchCord5(usb2, 0, TxSelect, 1);
-AudioConnection          patchCord6(TxTest, 0, TxSelect, 3);
-AudioConnection          patchCord7(TxSelect, TxLow);
-//AudioConnection          patchCord7( TxSelect,0, MagPhase,0 );
-AudioConnection          patchCord8(agc1, Ip90);
-AudioConnection          patchCord9(agc2, Qm00);
-AudioConnection          patchCord10(Qm00, 0, Add_SSB, 2);
-AudioConnection          patchCord11(Ip90, 0, Add_SSB, 1);
-AudioConnection          patchCord12(TxLow, 0, MagPhase, 0);
-AudioConnection          patchCord13(Add_SSB, AMdet);
-AudioConnection          patchCord14(Add_SSB, BandWidth);
-AudioConnection          patchCord15(AMdet, AMlow);
-AudioConnection          patchCord16(AMlow, 0, Volume, 1);
-AudioConnection          patchCord17(BandWidth, 0, Volume, 0);
-AudioConnection          patchCord18(BandWidth, rms1);
-AudioConnection          patchCord19(SideTone, 0, Volume, 2);
-AudioConnection          patchCord20(Volume, dac1);
-//AudioConnection          patchCord21(Volume, 0, usb1, 0);
-//AudioConnection          patchCord22(Volume, 0, usb1, 1);
-// GUItool: end automatically generated code
-
-*/
-/*
-
-// GUItool: begin automatically generated code
-AudioInputAnalogStereo   adcs1;          //xy=85.71429443359375,312.71428298950195
-AudioInputUSB            usb2;           //xy=89.71429443359375,375.71428298950195
-AudioAnalyzePeak         peak1;          //xy=255.71429443359375,157.71428298950195
-AudioMixer4              RxTx2;          //xy=273,353.42859268188477
-AudioMixer4              RxTx1;          //xy=275.71429443359375,235.71428298950195
-AudioFilterFIR           Qm00;           //xy=411.142879486084,352.1428680419922
-AudioFilterFIR           Ip90;           //xy=414.1429252624512,235.2857151031494
-AudioMixer4              Sub_SSB;        //xy=594.1429061889648,290.85711097717285
-AudioEffectRectifier     AMdet;          //xy=595.8571014404297,361.0000190734863
-AudioMagPhase2           MagPhase;       //xy=622.5714797973633,192.28576278686523
-AudioFilterFIR           AMlow;          //xy=722.9999847412109,359.5714340209961
-AudioFilterBiquad        BandWidth;        //xy=768.5713768005371,274.2857131958008
-AudioSynthWaveformSine   SideTone;         //xy=810.4286575317383,412.71426010131836
-AudioAnalyzeRMS          rms1;           //xy=924.2859268188477,211.42855072021484
-AudioMixer4              Volume;         //xy=924.2858772277832,291.4285659790039
-AudioOutputAnalog        dac1;           //xy=1062.0001792907715,248.57140922546387
-AudioOutputUSB           usb1;           //xy=1067.428768157959,331.7143135070801
-AudioConnection          patchCord1(adcs1, 0, RxTx1, 0);
-AudioConnection          patchCord2(adcs1, 0, RxTx1, 1);
-AudioConnection          patchCord3(adcs1, 0, RxTx2, 1);
-AudioConnection          patchCord4(adcs1, 0, peak1, 0);
-AudioConnection          patchCord5(adcs1, 1, RxTx2, 0);
-AudioConnection          patchCord6(usb2, 0, RxTx1, 2);
-AudioConnection          patchCord7(usb2, 0, RxTx2, 2);
-AudioConnection          patchCord8(RxTx2, Qm00);
-AudioConnection          patchCord9(RxTx1, Ip90);
-AudioConnection          patchCord10(Qm00, 0, MagPhase, 1);
-AudioConnection          patchCord11(Qm00, 0, Sub_SSB, 2);
-AudioConnection          patchCord12(Ip90, 0, MagPhase, 0);
-AudioConnection          patchCord13(Ip90, 0, Sub_SSB, 1);
-AudioConnection          patchCord14(Sub_SSB, AMdet);
-AudioConnection          patchCord15(Sub_SSB, BandWidth);
-AudioConnection          patchCord16(AMdet, AMlow);
-AudioConnection          patchCord17(AMlow, 0, Volume, 1);
-AudioConnection          patchCord18(BandWidth, 0, Volume, 0);
-AudioConnection          patchCord19(BandWidth, rms1);
-AudioConnection          patchCord20(SideTone, 0, Volume, 2);
-AudioConnection          patchCord21(Volume, dac1);
-AudioConnection          patchCord22(Volume, 0, usb1, 0);
-AudioConnection          patchCord23(Volume, 0, usb1, 1);
-// GUItool: end automatically generated code
-*/
 
 // I2C functions that the OLED library expects to use.
 void i2init(){
@@ -665,7 +356,6 @@ public:
 
   inline void FAST freq_calc_fast(int16_t df)  // note: relies on cached variables: _msb128, _msa128min512, _div, _fout, fxtal
   { 
- //static int mod;   // !!! test
     #define _MSC  0x80000  //0x80000: 98% CPU load   0xFFFFF: 114% CPU load
     uint32_t msb128 = _msb128 + ((int64_t)(_div * (int32_t)df) * _MSC * 128) / fxtal;
 
@@ -673,14 +363,18 @@ public:
     //register uint32_t xmsb = (_div * (_fout + (int32_t)df)) % fxtal;  // xmsb = msb * fxtal/(128 * _MSC);
     //uint32_t msb128 = xmsb * 5*(32/32) - (xmsb/32);  // msb128 = xmsb * 159/32, where 159/32 = 128 * 0xFFFFF / fxtal; fxtal=27e6
 
- //++mod;
- //if( mod > 0 && mod < 50 ){
- //   Serial.print( df );  Serial.write(' ');     // !!! testing get a burst
- //   Serial.print( php ); Serial.write(' ');
-  //  Serial.print( magp );
-  //  Serial.println(); 
- //}
- //if( mod > 20000 ) mod = 0;
+    if( DEBUG_MP ){
+       static int mod;
+       ++mod;
+       if( /* mod > 0 && mod < 50 || */ trigger_){
+          Serial.print( df );  Serial.write(' ');     //  testing, get a slice of data
+          Serial.print( rav_df );  Serial.write(' ');
+          //Serial.print( php ); Serial.write(' ');
+          Serial.print( magp );
+          Serial.println(); 
+       }
+       if( mod > 20000 ) mod = 0;
+    }
 
     //#define _MSC  (F_XTAL/128)  // 114% CPU load  perfect alignment
     //uint32_t msb128 = (_div * (_fout + (int32_t)df)) % fxtal;
@@ -803,15 +497,13 @@ static SI5351 si5351;
 // the transmit process uses I2C in an interrupt context.  Must prevent other users from writing.  
 // No frequency changes or any OLED writes.  transmitting variable is used to disable large parts of the system.
 #define DRATE 6                      // decimation rate used in MagPhase
-#define F_SAMP_TX (44117/DRATE)
-//#define _UA (44117/(2*DRATE))          // match definition in MagPhase.cpp
-#define _UA 8448
-#define R_SAMP_UA 0.870363794          // float of F_SAMP_TX/_UA   (44117/6) / 8448
+#define F_SAMP_TX (44117/DRATE)      // ! setting _UA and sample rate the same, removed scaling calculation
+#define _UA (44117/DRATE)            // match definition in MagPhase.cpp
 
 int eer_count;
 int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
-int overs;               // !!! debug
+int overs;
 // float eer_time = 90.680;  //90.668;  // us for each sample deci rate 4
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 // float eer_time = 113.335;   // 1/5 rate
@@ -834,19 +526,28 @@ int mag;
    php = phase_ ;                        // !!! testing print phase
    
       if( dp < 0 ) dp = dp + _UA;
-
-      //dp *= 2;    // (F_SAMP_TX / _UA);
-      dp = (float)dp * R_SAMP_UA;
-      if( dp < 3100 /*F_SAMP_TX / 2 */ ){     // skip sending out of tx bandwidth freq range
-         if( mode == LSB ) dp = -dp + bfo;    // bfo offset for weaver
+      // removed scaling dp, instead have _UA same as sample rate
+      if( dp < 3100  ){     // skip sending out of tx bandwidth freq range
+         if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
          else dp -= bfo;
-         si5351.freq_calc_fast(dp);
-         if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
-           si5351.SendPLLBRegisterBulk();
-           else ++overs;                   // !!! debug only, maybe keep this and display : Out of time, count missed I2C transaction
+         if( mode == DIGI ){                         // filter the phase results, good idea or not?
+            rav_df = 27853 * rav_df + 4950 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
+            rav_df >>= 15;
+            if( DEBUG_MP == 0 ) dp = rav_df;         // see the difference on debug, else use new value
+         }
+       
+          si5351.freq_calc_fast(dp);
+          if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
+              si5351.SendPLLBRegisterBulk();
+              else ++overs;                     //  Out of time, count missed I2C transaction
       }     
            
    mag = MagPhase.mvalue(eer_count);
+   if( mode == DIGI ){
+       rav_mag = 27853 * rav_mag + 4950 * mag;
+       rav_mag >>= 15;
+       mag = rav_mag;
+   }
    // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
    magp = mag >> 5;
 
@@ -879,7 +580,7 @@ int mag;
 void setup() {
    int contrast = 68;
 
-   if( DEBUG ) Serial.begin(9600);
+   Serial.begin(1200);                   // usb serial,  baud rate makes no difference.  Argo V baud rate is 1200.
 
    pinMode(EN_A,INPUT_PULLUP);
    pinMode(EN_B,INPUT_PULLUP);
@@ -913,7 +614,7 @@ void setup() {
   AudioNoInterrupts();
   AudioMemory(40);
   
-  SSB.gain(1,1.0);   // correct sideband
+  SSB.gain(1,1.0);             // sub for correct sideband
   SSB.gain(2,-1.0);
   SSB.gain(0,0.0);
   SSB.gain(3,0.0);
@@ -924,7 +625,7 @@ void setup() {
   TxSelect.gain(3,1.0);        // !!! testing, sending sidetone
   //TxSelect.gain(3,0.0);          // not testing
 
-  // AM high low pass filter fixed bandwidth
+  // AM high low pass filter,  fixed bandwidth at 4k, highpass to remove DC
   AMLow.setHighpass(0,300,0.70710678);
   AMLow.setLowpass(1,4000,0.70710678);
  // AMLow.setLowpass(2,4000,0.70710678);
@@ -934,9 +635,7 @@ void setup() {
   set_agc_gain(agc_gain);
   
   filter = 3;
-  //set_Weaver_bandwidth(3000);
   set_bandwidth();
-  //qsy(freq);
 
   AudioInterrupts();
 
@@ -1053,7 +752,7 @@ void tx(){
   si5351.SendRegister(3, 0b11111011);      // Enable clock 2
   MagPhase.setmode(1);
   EER_timer.begin(EER_function,eer_time);
-  
+  tx_status(1);                            // clear row and print headers
 }
 
 void rx(){
@@ -1062,7 +761,11 @@ void rx(){
   MagPhase.setmode(0);
   transmitting = 0;
   si5351.SendRegister(3, 0b11111100);      // Enable clock 0 and 1
-
+  overs = 0;
+  #ifdef USE_LCD
+     LCD.clrRow(0);
+     status_display();
+  #endif   
 }
 
 
@@ -1094,27 +797,53 @@ int t;
          qsy( freq + (t * step_ ));
          freq_display();
       }
-      if( encoder_user == VOLUME ) volume_adjust(t);
+      if( encoder_user == VOLUME ) volume_adjust(t);    // generic knob routine, tap for other functions
    }
 
-      // agc
-   if( rms1.available() ){  
+   if( rms1.available() ){                              // agc, cw decode
         sig_rms = rms1.read();
         agc_process( sig_rms);
         report_peaks();
+        if( mode == CW ) code_read(sig_rms);
    }
 
-
-   //  1 ms routines
-   if( tm != millis()){ 
+   t = millis() - tm;                         // 1ms routines, loop for any missing counts
+   if( t > 10 )  t = 1;                       // first time
+   if( t > 0 ){
       tm = millis();
-      if( step_timer ) --step_timer;       // 1.5 seconds to dtap freq step up to 500k 
-      
-      t = button_state(0);
-      if( t > DONE ) button_process(t);
-
+      while( t-- ){
+         if( step_timer ) --step_timer;       // 1.5 seconds to dtap freq step up to 500k 
+         int t2 = button_state(0);
+         if( t2 > DONE ) button_process(t2);
+      }
+      if( transmitting ) tx_status(0);
    }
+
+   //if( Serial.availableForWrite() > 20 ) radio_control();      // CAT.  Avoid any serial blocking. fails on Teensy, works on UNO.
+   radio_control();
    
+}
+
+// can show info on LCD but not on OLED while transmitting
+void tx_status( int clr ){
+static int count;
+int num;
+
+#ifdef USE_LCD
+   if( clr ){
+       LCD.clrRow(0);
+       LCD.print((char *)"Tcpu ",0,ROW0);
+       LCD.print((char *)"Ovr ",6*8,ROW0);
+   }
+
+   if( ++count < 500 ) return;                // half second updates
+   count = 0;
+   num = AudioProcessorUsage();
+   num = constrain(num,0,99);
+   LCD.printNumI(num,5*6,ROW0,2,' ');
+   num = constrain(overs,0,99);
+   LCD.printNumI(num,RIGHT,ROW0,2,' ');
+#endif    
 }
 
 void report_peaks(){
@@ -1124,7 +853,7 @@ static int count;              // !!! think about PWM'ing the RX pin for part of
   if( encoder_user != FREQ ) return;
   count = 0;
 
-  //eer_test();                       // !!! testing
+  if( DEBUG_MP ) eer_test();                       //  testing
 /*
   LCD.print((char *)"Adc ",0,ROW3);
   LCD.print((char *)"H45 ",0,ROW4);
@@ -1152,16 +881,20 @@ float amp;
   // Serial.println( overs );
    LCD.printNumF(eer_time,5,0,ROW3);
 
-   eer_adj = 0; overs = 0;
+   eer_adj = 0;
    if( sec == 15 ) sec = 0;
    if( sec == 3 ) tx();
    if( sec == 12 ) rx();
    ++sec;
-   freq = ( sec & 1 ) ? 800 : 2100;
-   amp  = ( sec & 1 ) ? 0.9 : 0.7;
-   
+   trigger_ = 1;
+   delay(5);                           // these delays need to be longer than expected to capture edges
+   freq = ( sec & 1 ) ? 200 : 800;
+   amp  = ( sec & 1 ) ? 0.22 : 0.35;
    SideTone.frequency(freq);
    SideTone.amplitude(amp);
+   delay(20);                          // especially this one
+   trigger_ = 0;
+   
  //  if ( sec < 12 && sec >= 3 ){
  //   if( freq <= 1000 ) freq -= 50;
  //   else freq -= 200;
@@ -1187,7 +920,7 @@ void button_process( int t ){
         else if( encoder_user == FREQ ){
            step_ /= 10;
            if( step_ == 500 ) step_ = 1000;
-           if( step_ == 1 ) step_ = 1000;
+           if( step_ <= 1 ) step_ = 1000;
            step_timer = 1500;                  // 1.5 seconds to dtap up past 1000
            status_display();
         }
@@ -1223,7 +956,7 @@ void button_process( int t ){
 
 // now general use knob function
 void volume_adjust( int val ){
-const char *msg[] = {"Volume  ","RF gain "}; 
+const char *msg[] = {"Volume  ","RF gain ","CW det  "}; 
 float pval; 
 
    if( val == 0  ){     // first entry, clear status line
@@ -1263,8 +996,13 @@ float pval;
         set_agc_gain(agc_gain);
         pval = agc_gain;
       break;
+      case CW_DET_U:
+        cw_det_val += (float)val * 0.05;
+        cw_det_val = constrain(cw_det_val,1.0,2.0);
+        pval = cw_det_val;
+      break;
    }
-   // 
+   
    #ifdef USE_LCD
       LCD.printNumF(pval,2,6*8,ROW0);
    #endif
@@ -1278,16 +1016,17 @@ void qsy( uint32_t f ){
 static int cw_offset = 700;     // !!! make global ?, add to menu if want to change on the fly
 
     // with weaver rx, freq is the display frequency.  vfo and bfo move about with bandwidth changes.
-    if( transmitting ) return;  // can't use I2C for other purposes during transmit
+    if( transmitting ) return;                            // can't use I2C for other purposes during transmit
     freq = f;
     //    noInterrupts(); 
-    if( mode == AM ) si5351.freq(freq + 2500 ,0,90);     // pass carrier for agc, tune one sideband or down 5k for the other sideband
+    if( mode == AM ) si5351.freq(freq + 2500 ,0,90);      // pass carrier for agc, tune one sideband or down 5k for the other sideband
     else if(mode == CW){
-      si5351.freq(freq + cw_offset - bfo, 90, 0);  // RX in LSB
-      si5351.freq_calc_fast(-cw_offset + bfo); si5351.SendPLLBRegisterBulk(); // TX at freq
+      si5351.freq(freq + cw_offset - bfo, 90, 0);         // RX in LSB
+      si5351.freq_calc_fast(-cw_offset + bfo);
+      si5351.SendPLLBRegisterBulk();                      // TX at freq
     }
     else if(mode == LSB) si5351.freq(freq - bfo, 90, 0);  // RX in LSB
-    else si5351.freq(freq + bfo, 0, 90);  // RX in USB
+    else si5351.freq(freq + bfo, 0, 90);                  // RX in USB, DIGI
     //interrupts();
     
     //freq_display();     // need to delay screen update until after menu_cleanup
@@ -1295,13 +1034,13 @@ static int cw_offset = 700;     // !!! make global ?, add to menu if want to cha
 }
 
 void status_display(){
-const char modes[] = "CW LSBUSBAM ";
+const char modes[] = "CW LSBUSBAM DIG";
 char msg[4];
 char msg2[9];
 char buf[20];
 
     if( transmitting ) return;       // avoid OLED writes
-    if( mode > 3 ) return;           //!!! how to handle memory tuning
+    if( mode > 4 ) return;           //!!! how to handle memory tuning
     strncpy(msg,&modes[3*mode],3);
     msg[3] = 0;
     
@@ -1401,15 +1140,73 @@ void menu_cleanup(){
    status_display(); 
 }
 
+
+//  USA: can we transmit here and what mode
+char band_priv( uint32_t f ){
+char r = 'X';
+
+   if( band != 1 ) f = f / 1000;
+   else f = f / 100;
+   switch( band ){               // is there an easy way to do this
+       case 0:
+          if( f >= 3500 && f <= 4000 ){
+             if( f < 3525 ) r = 'e';
+             else if( f < 3600 ) r = 'g';
+             else if( f < 3700 ) r = 'E';
+             else if( f < 3800 ) r = 'A';
+             else r = 'G';
+          }
+       break;
+       case 1:
+          if( mode == USB ){
+             if( f == 53305 || f == 53465 || f == 53570 || f == 53715 || f == 54035 ) r = 'G';
+          }
+          // !!! can add CW freq's someday
+       break;
+       case 2:
+          if( f >= 7000 && f <= 7300 ){
+             if( f < 7025 ) r = 'e';
+             else if ( f < 7125 ) r = 'g';
+             else if ( f < 7175 ) r = 'A';
+             else r = 'G';
+          }
+       break;
+       case 3:
+          if( f >= 10100 && f <= 10150 ) r = 'g';
+       break;
+       case 4:
+          if( f >= 14000 && f <= 14350 ){
+             if( f < 14025 ) r = 'e';
+             else if( f < 14150 ) r = 'g';
+             else if( f < 14175 ) r = 'E';
+             else if( f < 14225 ) r = 'A';
+             else r = 'G';
+          }
+       break;
+       case 5:
+          if( f >= 18068 && f <= 18168 ){
+             if( f < 18110 ) r = 'g';
+             else r = 'G';
+          }
+       break;
+   }
+
+  return r;
+}
+
 void freq_display(){
 int rem;
-  
+char priv[2];
+
+   priv[0] = band_priv( freq );
+   priv[1] = 0;
    rem = freq % 1000;
    #ifdef USE_LCD
     LCD.setFont(MediumNumbers);
     LCD.printNumI(freq/1000,0,ROW1,5,'/');       // '/' is a leading space with altered font table
     LCD.setFont(SmallFont);
     LCD.printNumI(rem,62,ROW2,3,'0');
+    LCD.print( priv, RIGHT, ROW1 );
    #endif
 
    #ifdef USE_OLED
@@ -1417,6 +1214,7 @@ int rem;
     OLD.printNumI(freq/1000,4*12,ROW0,5,'/');
     OLD.setFont(SmallFont);
     OLD.printNumI(rem,9*12,ROW1,3,'0');
+    OLD.print( priv, RIGHT, ROW0 );
    #endif
 }
 
@@ -1483,25 +1281,22 @@ int b;
 int button_state( int fini ){     /* state machine running at 1ms rate */
 static int press_,nopress;
 static int st;
-static int32_t tm;               // catch missing ticks if any
 int sw;
-int t;
 
       if( fini ){                // switch state latched until processed and we say done
           st = DONE;
           return st;
       }
-      t = (int)(millis() - tm);
-      tm = millis();
+      
       sw = digitalReadFast(EN_SW) ^ 1;   
-      if( sw ) press_ += t, nopress= 0;
-      else nopress += t, press_= 0;
+      if( sw ) ++press_ , nopress= 0;
+      else ++nopress , press_= 0;
       
       /* switch state machine */
          if( st == IDLE_ && press_ >= DBOUNCE ) st = ARM;
          if( st == DONE && nopress >= DBOUNCE ) st = IDLE_;       /* reset state */
 
-         /* double tap detect */
+         /* double tap and long detect */
          if( st == ARM && nopress >= DBOUNCE/2 )  st = DTDELAY;
          if( st == ARM && press_ >= 8*DBOUNCE )  st = LONGPRESS; 
          if( st == DTDELAY && nopress >= 4*DBOUNCE ) st = TAP;
@@ -1509,6 +1304,537 @@ int t;
           
      return st;        
 }
+
+ // check if need a band change before changing frequency from CAT control
+void cat_qsy( int32_t f ){
+const int32_t band_breaks[6] = { 4500000,6500000,8500000,13000000,15500000,22500000 };
+int  i;
+
+   for( i = 0; i < 6; ++i ){
+      if( f < band_breaks[i] ) break;
+   }
+   if( i == 6 ) i = 5;                   // tuned way above 17 meter filter in this radio
+   if( i != band ) band_change( i );
+   qsy( f );
+   freq_display();
+}
+
+
+/*****************************************************************************************/
+// TenTec Argonaut V CAT emulation
+
+//int un_stage(){    /* send a char on serial */
+//char c;
+
+//   if( stg_in == stg_out ) return 0;
+//   c = stg_buf[stg_out++];
+//   stg_out &= ( STQUESIZE - 1);
+//   Serial.write(c);
+//   return 1;
+//}
+
+#define CMDLEN 20
+char command[CMDLEN];
+uint8_t vfo = 'A';
+
+void radio_control() {
+static int expect_len = 0;
+static int len = 0;
+static char cmd;
+
+char c;
+int done;
+
+    if (Serial.available() == 0) return;
+    
+    done = 0;
+    while( Serial.available() ){
+       c = Serial.read();
+       command[len] = c;
+       if(++len >= CMDLEN ) len= 0;  /* something wrong */
+       if( len == 1 ) cmd = c;       /* first char */
+       /* sync ok ? */
+       if( cmd == '?' || cmd == '*' || cmd == '#' );  /* ok */
+       else{
+          len= 0;
+          return;
+       }
+       if( len == 2  && cmd == '*' ) expect_len = lookup_len(c);    /* for binary data on the link */       
+       if( (expect_len == 0 &&  c == '\r') || (len == expect_len) ){
+         done = 1;
+         break;   
+       }
+    }
+    
+    if( done == 0 ) return;  /* command not complete yet */
+        
+    if( cmd == '?' ){
+      get_cmd();
+     // operate_mode = CAT_MODE;            // switch modes on query cat command
+     // if( wwvb_quiet < 2 ) ++wwvb_quiet;  // only one CAT command enables wwvb logging, 2nd or more turns it off
+     // mode_display();
+    }
+    if( cmd == '*' )  set_cmd();
+    if( cmd == '#' ){
+        pnd_cmd(); 
+       // if( wwvb_quiet < 2 ) ++wwvb_quiet;  // allow FRAME mode and the serial logging at the same time
+    }
+
+ /* prepare for next command */
+   len = expect_len= 0;
+   stage('G');       /* they are all good commands */
+   stage('\r');
+
+}
+
+int lookup_len(char cmd2){     /* just need the length of the command */
+int len;
+
+   
+   switch(cmd2){     /* get length of argument */
+    case 'X': len = 0; break;
+    case 'A':
+    case 'B': len = 4; break;
+    case 'E':
+    case 'P':
+    case 'M': len = 2; break;
+    default:  len = 1; break ;
+   }
+   
+   return len+3;     /* add in *A and cr on the end */
+}
+
+void set_cmd(){
+char cmd2;
+unsigned long val4;
+
+   cmd2 = command[1];
+   switch(cmd2){
+    case 'X':   stage_str("RADIO START"); stage('\r'); break; 
+    case 'O':   /* split */ 
+    break;
+    case 'A':   // set frequency
+    case 'B':
+       val4 = get_long();
+       cat_qsy(val4);  
+    break;
+    case 'E':
+       if( command[2] == 'V' ) vfo = command[3];
+    break;
+    case 'W':    /* bandwidth */
+    break;
+    case 'K':    /* keying speed */
+    break;
+    case 'T':    /* added tuning rate as a command */
+    break;
+    case 'M':
+       int i = command[2] - '0';          // untangle Argo V modes and my modes
+       i &= 3;   i ^= 3;                  // make sure valid;  swap cw and am, swap usb and lsb
+       mode_change(i);
+    break;       
+   }  /* end switch */   
+}
+
+void get_cmd(){
+char cmd2;
+long arg;
+int len, i;
+
+   cmd2 = command[1];   
+   stage(cmd2);
+   switch(cmd2){
+    case 'A':     // get frequency
+    case 'B': 
+      arg = freq;
+      stage_long(arg);
+    break;
+    case 'V':   /* version */
+      stage_str("ER 1010-516");
+    break;
+    case 'W':          /* receive bandwidth */
+       stage(30);
+    break;
+    case 'M':          /* mode. 11 is USB USB  ( 3 is CW ) vfo A, vfo B */
+      i = ( mode ^ 3 ) + '0';                            // see if this works, untangle modes differences mine to Argo V
+      if( i == 7 ) i = 1;                                // change DIGI to USB
+      stage(i); stage(i);
+    break;
+    case 'O':          /* split */   
+       stage(0);
+    break;
+    case 'P':         /*  passband slider */
+       stage_int( 3000 );
+    break;
+    case 'T':         /* added tuning rate command */
+    break;   
+    case 'E':         /* vfo mode */
+      stage('V');
+      stage(vfo);
+    break;
+    case 'S':         /* signal strength */
+       stage(7);
+       stage(0);
+    break;
+    case 'C':      // transmitting status 
+       stage(0);
+       if( transmitting ) stage(1);
+       else stage(0);
+    break;
+    case 'K':   /* wpm on noise blanker slider */
+       stage( 15 - 10 );
+    break;   
+    default:           /* send zeros for unimplemented commands */
+       len= lookup_len(cmd2) - 3;
+       while( len-- ) stage(0);  
+    break;    
+   }
+  
+   stage('\r');  
+}
+
+
+void stage_str( String st ){
+unsigned int i;
+char c;
+
+  for( i = 0; i < st.length(); ++i ){
+     c = st.charAt( i );
+     stage(c);
+  }    
+}
+
+void stage_long( long val ){
+unsigned char c;
+   
+   c = val >> 24;
+   stage(c);
+   c = val >> 16;
+   stage(c);
+   c = val >> 8;
+   stage(c);
+   c = val;
+   stage(c);
+}
+
+
+unsigned long get_long(){
+union{
+  unsigned long v;
+  unsigned char ch[4];
+}val;
+int i;
+
+  for( i = 0; i < 4; ++i) val.ch[i] = command[5-i]; // or i+2 for other endian
+  return val.v;
+}
+
+void stage_int( int val ){
+unsigned char c;
+   c = val >> 8;
+   stage(c);
+   c = val;
+   stage(c);
+}
+
+void stage_num( int val ){   /* send number in ascii */
+char buf[35];
+char c;
+int i;
+
+   itoa( val, buf, 10 );
+   i= 0;
+   while( (c = buf[i++]) ) stage(c);  
+}
+
+void pnd_cmd(){
+char cmd2;
+   
+   cmd2 = command[1];
+   switch(cmd2){
+     case '0':  rx();  break;    // enter rx mode
+     case '1':  tx();  break;    // TX
+   }
+
+}
+
+/********************* end Argo V CAT ******************************/
+
+
+// ***************   group of functions for a read behind morse decoder    ******************
+//   attempts to correct for incorrect code spacing, the most common fault.
+int cread_buf[16];
+int cread_indx;
+int dah_table[8] = { 20,20,20,20,20,20,20,20 };
+int dah_in;
+
+
+int cw_detect(float av ){
+int det;                        // cw mark space detect
+static int count;               // mark,space counts
+static float rav;               // running average of signals
+int stored;
+
+   rav = 31.0*rav + av;     // try a longer time constant here.  Maybe shorter for faster code and
+   rav /= 32.0;             // longer for slower code would work best to avoid noise in between characters.
+                            // trade off for fast fading signals being lost with longer constant.
+   
+   det = ( av > cw_det_val * rav ) ? 1 : 0;       // simple AM detector, maybe could use the audio library tone object, may work better.
+
+   det = cw_denoise( det );
+       
+   // debug arduino graph values to see signals
+  // Serial.print( 10*av ); Serial.write(' '); Serial.print(10*rav); Serial.write(' ');
+  // Serial.write(' '); Serial.println(det);
+   stored = 0;
+   if( det ){                // marking
+      if( count > 0 ){
+         if( count < 99 ) storecount(count), stored = 1;
+         count = 0;
+      }
+      --count;
+   }
+   else{                     // spacing
+      if( count < 0 ){
+        storecount(count), stored = 1;
+        count = 0; 
+      }
+      ++count;
+      if( count == 99 ) storecount(count), stored = 1;  // one second no signal
+   }
+   
+   return stored;
+}
+
+// slide some bits around to remove 1 reversal of mark space
+int cw_denoise( int m ){
+static int val;
+
+   if( m ){
+      val <<= 1;
+      val |= 1;
+   }
+   else val >>= 1;
+
+   val &= 7;
+   if( m ) return val & 4;      // need 3 marks in a row to return true
+   else return val & 2;         // 1 extra mark returned when spacing
+                                // so min mark count we see is -2 if this works correctly
+                                // this shortens mark count by 1 which may be ok as
+                                // the tone detect seems to stretch the tone present time
+}
+
+// store mark space counts for cw decode
+void storecount( int count ){
+
+     cread_buf[cread_indx++] = count;
+     cread_indx &= 15;
+
+     if( count < 0 ){      // save dah counts
+        count = -count;
+        if( count >= 12 ){      // 12 for 10ms per sample, 40 for 3ms?  work up to 25 wpm
+          dah_table[dah_in++] = count;
+          dah_in &= 7;
+        }
+     }
+}
+
+void shuffle_down( int count ){    /* consume the stored code read counts */
+int i;
+
+  for( i= count; i < cread_indx; ++i ){
+    cread_buf[i-count] = cread_buf[i];
+  }
+  
+  cread_indx -= count;
+  cread_indx &= 15;     // just in case out of sync  
+}
+
+
+int code_read_scan(int slice){  /* find a letter space */
+int ls, i;
+
+/* scan for a letter space */
+   ls = -1;
+   for( i= 0; i < cread_indx; ++i ){
+      if( cread_buf[i] > slice ){
+        ls = i;
+        break;
+      }
+   }
+   return ls;   
+}
+
+
+unsigned char morse_lookup( int ls, int slicer){
+unsigned char m_ch, ch;
+int i,elcount;
+
+   /* form morse in morse table format */
+   m_ch= 0;  elcount= 1;  ch= 0;
+   for( i = 0; i <= ls; ++i ){
+     if( cread_buf[i] > 0 ) continue;   /* skip the spaces */
+     if( cread_buf[i] < -slicer ) m_ch |= 1;
+     m_ch <<= 1;
+     ++elcount;
+   }
+   m_ch |= 1;
+   /* left align */
+   while( elcount++ < 8 ) m_ch <<= 1;
+
+   /* look up in table */
+   for( i = 0; i < 47; ++i ){
+      if( m_ch == morse[i] ){
+        ch = i+',';
+        break;
+      }
+   }
+
+   return ch;  
+}
+
+// routines from my TenTec Rebel code
+void code_read( float val ){  /* convert the stored mark space counts to a letter on the screen */
+int slicer;
+int i;
+unsigned char m_ch;
+int ls,force;
+static int wt;    /* heavy weighting will mess up the algorithm, so this compensation factor */
+static int singles;
+static int farns,ch_count;
+static int eees;
+static uint32_t tm;
+
+   if( ( millis() - tm ) < 9 ) return;     // run at 10ms rate
+   tm = millis();
+   
+   if( cw_detect( val ) == 0 && cread_indx < 15 ) return;
+
+   if( cread_indx < 2 ) return;    // need at least one mark and one space in order to decode something
+
+   /* find slicer from dah table */
+   slicer= 0;   force= 0;
+   for( i = 0; i < 8; ++i ){
+     slicer += dah_table[i];
+   }
+   slicer >>= 4;   /* divide by 8 and take half the value */
+
+   ls = code_read_scan(slicer + wt);
+   
+   if( ls == -1 && cread_indx == 15 ){   // need to force a decode
+      for(i= 1; i < 30; ++i ){
+        ls= code_read_scan(slicer + wt - i);
+        if( ls >= 0 ) break;
+      } 
+      --wt;    /* compensate for short letter spaces */
+      force= 1;
+   }
+   
+   if( ls == -1 ) return;
+   
+   m_ch = morse_lookup( ls, slicer );
+   
+   /* are we getting just E and T */
+   if( m_ch == 'E' || m_ch == 'T' ){   /* less weight compensation needed */
+      if( ++singles == 4 ){
+         ++wt;
+         singles = 0;
+      }
+   }
+   else if( m_ch ) singles = 0;   
+ 
+   /* are we getting just e,i,s,h,5 ?   High speed limit reached.  Attempt to receive above 30 wpm */
+  // if( m_ch > 0 && ( m_ch == 'S' || m_ch == 'H' || m_ch == 'I' || m_ch == '5' )) ++shi5;
+  // else if( m_ch > 0 && m_ch != 'E' ) --shi5;   // E could be just noise so ignore
+  // if( shi5 < 0 ) shi5 = 0;
+ 
+   /* if no char match, see if can get a different decode */
+   if( m_ch == 0 && force == 0 ){
+     //if( ( slicer + wt ) < 10 ) ls = code_read_scan( slicer + wt -1 );
+     //else ls = code_read_scan( slicer + wt -2 );
+     ls = code_read_scan( slicer + wt - ( slicer >> 2 ) );
+     m_ch = morse_lookup( ls, slicer );
+     if( m_ch > 64 ) m_ch += 32;       // lower case for this algorithm
+     //if( m_ch ) --wt;     this doesn't seem to be a good idea
+   }
+ 
+   if( m_ch ){   /* found something so print it */
+      ++ch_count;
+      if( m_ch == 'E' || m_ch == 'I' ) ++eees;         // just noise ?
+      else eees = 0;
+      if( eees < 5 ){
+         decode_print(m_ch);
+         //if( TerminalMode ) Serial.write(m_ch), ++tcount;
+      }
+      if( cread_buf[ls] > 3*slicer + farns ){   // check for word space
+        if( ch_count == 1 ) ++farns;            // single characters, no words printed
+        ch_count= 0;
+        decode_print(' ');
+        //if( TerminalMode ) Serial.write(' '), ++tcount;
+        //if( tcount > 55 ) tcount = 0, Serial.println();      // this is here so don't split words
+      }
+   }
+     
+   if( ls < 0 ) ls = 0;   // check if something wrong just in case  
+   shuffle_down( ls+1 );  
+
+   /* bounds for weight */
+   if( wt > slicer ) wt = slicer;
+   if( wt < -(slicer >> 1)) wt= -(slicer >> 1);
+   
+   if( ch_count > 10 ) --farns;
+   
+}
+
+
+void decode_print( char c ){
+
+   if( transmitting == 0 && ( encoder_user == FREQ || encoder_user == VOLUME ) ){
+      #ifdef USE_LCD
+         LCDcwprint( c );
+      #endif
+      #ifdef USE_OLED
+         OLDcwprint( c );
+      #endif
+   }
+}
+
+#ifdef USE_LCD                    // use 3 lines of 14 characters
+void LCDcwprint( char c ){
+static int row = ROW3, col = 0;
+char s[3];                        // no goto yet anyway
+
+   if( row == ROW3 ) c = tolower(c);   // display space tight below bigger numbes
+   s[0] = c;  s[1] = ' '; s[2] = 0;    // erase ahead
+   if( col == 84 - 6 ) s[1] = 0;       // except on end of line
+   LCD.print(s,col,row);
+   col += 6;
+   if( col > 84 - 6 ) col = 0, row += 8;
+   if( row > ROW5 ) row = ROW3;
+}
+#endif
+
+#ifdef USE_OLED                   // use 4 lines of 21 characters
+void OLDcwprint( char c ){
+static int row = 4, col = 0;
+
+   if( row == 4 ) row = 5;        // two row, comment these two lines to use 4 rows
+   if( row == 6 ) row = 7;        // 4 rows on tiny display is hard to read.
+   
+   OLD.gotoRowCol( row, col );
+   OLD.putch(c);
+   col += 6;
+   if( col > 126 - 6 ) col = 0, ++row;
+   if( row > 7 ) row = 4;
+   OLD.putch(' ');
+}
+#endif
+
+//  ***************   end of morse decode functions
+
+
+
+
+
 /*****************   MENU's *******************************/
 struct MENU {
   const int no_sel;                 // number of selections
@@ -1517,9 +1843,9 @@ struct MENU {
 };
 
 struct MENU mode_menu = {
-   5,
+   6,
    "Select Mode",
-   { "CW", "LSB", "USB", "AM", "Mem Tune" }          
+   { "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune" }          
 };
 
 
