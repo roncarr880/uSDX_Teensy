@@ -33,7 +33,7 @@
  *                  purpose. Can have only one of TX, FFT, AM running at any one time as each will need different filters.
  *    Version 1.39  Continuing with a Hilbert only version. Having issues with I and Q out of sync it seems.  No decode of SSB 
  *                  unless move some patchcords around or remove objects.  Rectify object was misbehaving. Updated my
- *                  Teensyduino install.
+ *                  Teensyduino install to fix.
  *    Version 1.40  Wrote MagPhase object to extract data from the Audio library stream to use for transmitting.  Set _UA at             
  *                  44117/8 for initial testing.
  *    Version 1.41  I2C did not support sample rate 1/4 of 44k ( 11k ) for TX.  Changed MagPhase to use 1/6 rate or  7352. It does           
@@ -44,26 +44,32 @@
  *                  opinion that Hilberts do not work well at baseband with a high sample rate.
  *    Version 1.44  Since the RX hilberts could not be used for transmitting, returning to the Weaver receive method. The custom
  *                  audio object SSB_AM is no longer needed.  No AM mode for now.
- *    Version 1.45  Add an AM detector.  Double reset the Si5351 on band/mode changes as sometimes it seems out of sync.  Think              
- *                  this issue started when I added the dividers to the bandstack ( to run the Si5351 in spec for bands other than 80).
+ *    Version 1.45  Added an AM detector.  Double reset the Si5351 on band/mode changes as sometimes it seems out of sync.  Think              
+ *                  this issue started when I added the dividers to the bandstack ( to run the Si5351 in spec for bands other than 80). 
  *    Version 1.46  CAT control using Argonaut V emulation.  Added USA band limits indication.  Made some changes to MagPhase, phase
  *                  may or may not be better, magnitude is better. Added CW decoder. Added Digi mode that filters magnitude and phase
- *                  on TX.  Changed _UA to be the TX sample rate as that seems simplest overall.  
+ *                  on TX.  Changed _UA to be the TX sample rate as that seems simplest overall.  Added S meter. CW decoder needs help.
+ *    Version 1.47  RIT added that works as described below in encoder switch usage. Changed swapping sidebands to the SSB adder
+ *                  rather than in the Si5351. 
+ *    Version 1.48  Wired DIT, DAH, RX, KEYOUT signals to the Teensy 3.2.
  */
 
- 
-#define VERSION 1.46
+#define VERSION 1.48
 
 /*
  * The encoder switch works like this:
  * A tap changes the tuning step with 1k, 100, 10 in rotation.
  *   To change to a larger tuning step, first tap then double tap within 1.5 seconds and select 5k, 50k, 500k steps with double taps.
- * Normally a double tap brings up the volume control.  When done adjusting, double tap back to normal turning.
- *   Or single tap for RF gain control ( actually gain in the agc amps ), another tap for CW decoder level.
- * Long Press brings up the menu.  You can make selections with a tap.  Double tap exits.  And see sticky menus option below for 
- *   different behavior. 
+ * Normally a double tap brings up the volume control.  When done adjusting, double tap back to normal tuning.
+ *   Or single tap for RF gain control ( actually gain in the agc amps ), another tap for CW decoder level, etc.
+ * Long Press normally brings up the menu.  You can make selections with a tap.  Double tap exits.  And see sticky menus option below for 
+ *   different behavior.  If RIT is active, Long Press cancels RIT.
+ *   
+ * RIT is automatically enabled upon transmit.  Cancel with a long press to return to normal frequency tuning.  RIT is not tracked in 
+ * the usual sense, instead Si5351 PLLB is not updated with new frequency changes when RIT is active. (  A hidden vfo B )
  */
-
+//   !!! to do - test RIT actually works as described and tx remains fixed for CW and SSB modes. 
+ 
  // QCX pin definitions mega328 to Teensy 3.2
 /* 
 #define LCD_D4  0         //PD0    (pin 2)      N/C
@@ -74,16 +80,16 @@
 #define FREQCNT 5         //PD5    (pin 11)     PULLUP ( @ 3.x k ) not needed, installed when debugging an issue
 #define ROT_A   6         //PD6    (pin 12)     6
 #define ROT_B   7         //PD7    (pin 13)     7
-#define RX      8         //PB0    (pin 14)              + PullUp R36 installed
+#define RX      8         //PB0    (pin 14)     4     + PullUp R36 installed
 #define SIDETONE 9        //PB1    (pin 15)     A14  DAC wired seperately from SIDETONE net
-#define KEY_OUT 10        //PB2    (pin 16)              + PullDown  10k ( need PWM pin )
+#define KEY_OUT 10        //PB2    (pin 16)     5     + PullDown  10k ( need PWM pin )
 #define SIG_OUT 11        //PB3    (pin 17)     PullDown  10k, no Teensy connection to SIG_OUT net
-#define DAH     12        //PB4    (pin 18)
-#define DIT     13        //PB5    (pin 19)
+#define DAH     12        //PB4    (pin 18)     22
+#define DIT     13        //PB5    (pin 19)     23
 #define AUDIO1  14        //PC0/A0 (pin 23)     A2   ( or swap ? )
 #define AUDIO2  15        //PC1/A1 (pin 24)     A3
-#define DVM     16        //PC2/A2 (pin 25)
-#define BUTTONS 17        //PC3/A3 (pin 26)     12     digital button active low
+#define DVM     16        //PC2/A2 (pin 25)     goes to source of a BS170, drain to A3 ( Q audio2 ), gate switched by 14
+#define BUTTONS 17        //PC3/A3 (pin 26)     12     single digital encoder switch,  active low
 #define LCD_RS  18        //PC4    (pin 27)     N/C
 #define SDA     18        //PC4    (pin 27)     A4
 #define SCL     19        //PC5    (pin 28)     A5
@@ -94,6 +100,13 @@
         MOSI                                    11
         CLK                                     13   ?? does switching the LED generate noise, swap with pin 8?
 */
+#define RX          4
+#define ATTN2       4
+#define KEYOUT      5
+#define DAHpin     22
+#define DITpin     23
+#define PTT        23
+#define TXAUDIO_EN 14           // switches a FET to put DVM mic signal on Q audio input A3.
 
 //  Pick a screen:  Nokia LCD or I2C 128x64 OLED
 //  Running both together yields redefinition warnings as they are basically the same library, but it works.
@@ -106,7 +119,7 @@
 // 84 x 48 pixels or 6 lines by 14 characters in text mode
 #ifdef USE_LCD
   // I bypassed the pin to port code in this copy of the library as it didn't compile for ARM
-  // Changed to use digitalWriteFast and renamed to _t version.
+  // and changed to use digitalWriteFast on the signals and renamed to _t version.
  #include <LCD5110_Basic_t.h>
 #endif
 #ifdef USE_OLED 
@@ -172,20 +185,27 @@ int encoder_user;
 #define CW_DET_U   2
 int volume_user;
 
+#define MIC 0
+#define USBc 1        // conflicts with upper side band def USB, so be careful here.  
+#define SIDETONE 2 
+int tx_source = USBc; // starting on 17 meters FT8
+
+
 // Menus:  Long press to enter
 //   STICKY_MENU 0 :  Tap makes a selection and exits.   Double tap exits without a selection.
 //   STICKY_MENU 1 :  Tap makes a selection.  Double tap makes a selection and exits.
-#define STICKY_MENU 0
+#define STICKY_MENU 1
 
 struct BAND_STACK{
    int mode;
    uint32_t freq;
    int stp;
    int d;             // pre-calculated divider for each band. Can run Si5351 in spec except on 80 meters.
-   // could expand to relay commands, step, filter width etc.  Whatever plays nicely.
+   int tx_src;
+   // could expand to relay commands, filter width etc.  Whatever plays nicely.
 };
 
-// "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune"    mem tune special
+// "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune"    mem tune special case
 #define CW   0
 #define LSB  1
 #define USB  2
@@ -193,33 +213,35 @@ struct BAND_STACK{
 #define DIGI 4
 
 struct BAND_STACK bandstack[] = {    // index is the band
-  { LSB ,  3928000, 1000, 126 },
-  { USB ,  5330500,  500, 126 },     // special 500 step otherwise not reachable
-  { LSB ,  7163000, 1000, 100 },
-  { CW  , 10105000,  100,  68 },
-  { USB , 14100000, 1000,  54 },
-  { USB  ,18110000, 1000,  40 }
+  { LSB ,  3928000, 1000, 126, MIC },
+  { USB ,  5330500,  500, 126, MIC },     // special 500 step for this band, not reachable in the normal step changes.
+  { LSB ,  7163000, 1000, 100, MIC },
+  { CW  , 10105000,  100,  68, USBc },
+  { USB , 14100000, 1000,  54, MIC },
+  { DIGI, 18100000, 1000,  40, USBc }
 };
 
-uint32_t freq = 18110000L;     // probably should init these vars from the bandstack
+uint32_t freq = 18100000L;     // probably should init these vars from the bandstack
+int rit_enabled;
 int step_ = 1000;
 int band = 5;
-int mode = 2;
+int mode = DIGI;
 int filter = 4;
 int bfo;
-int magp;                      // !!! testing
+int magp;                      // tx drive display on the LCD only
 int php;                       // !!! testing phase print
 int32_t rav_df;                // digi mode tx filters
 int32_t rav_mag;
-int trigger_;                  // for debug using arduino plotter 
+int trigger_;                  // !!! testing for debug using arduino plotter 
 
 int step_timer;                // allows double tap to backup the freq step to 500k , command times out
                                // and returns to the normal double tap command ( volume )
 float af_gain = 0.3;
-float agc_gain = 2.0;
+float agc_gain = 1.0;
 float sig_rms;
 int transmitting;
 float cw_det_val = 1.3;        // mark space detect, adjust in volume options ( double tap, single tap )
+float agc_sig = 0.3;           // made global so can set it after tx and have rx process bring up the af gain
 
 
 #define stage(c) Serial.write(c)
@@ -237,7 +259,7 @@ float cw_det_val = 1.3;        // mark space detect, adjust in volume options ( 
 
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=153.57142639160156,302.3809280395508
-//AudioInputUSB            usb2;           //xy=293.2857666015625,469.6666030883789
+AudioInputUSB            usb2;           //xy=293.2857666015625,469.6666030883789
 AudioAnalyzePeak         peak1;          //xy=339.2857131958008,138.80953216552734
 AudioAmplifier           agc1;           //xy=340.00002670288086,210.00001525878906
 AudioAmplifier           agc2;           //xy=342.85715103149414,367.14287185668945
@@ -256,11 +278,12 @@ AudioAnalyzeRMS          rms1;           //xy=808.4643020629883,183.940483093261
 AudioFilterBiquad        AMLow;        //xy=848.5711517333984,127.38096237182617
 AudioMixer4              Volume;         //xy=928.821403503418,246.02381134033203
 AudioOutputAnalog        dac1;           //xy=1099.1429824829102,215.52377700805664
-//AudioOutputUSB           usb1;           //xy=1099.857234954834,268.52381896972656
+AudioOutputUSB           usb1;           //xy=1099.857234954834,268.52381896972656
+AudioAnalyzeToneDetect   CWdet;          //xy=934.2857284545898,314.2857036590576
 AudioConnection          patchCord1(adcs1, 0, peak1, 0);
 AudioConnection          patchCord2(adcs1, 0, agc1, 0);
 AudioConnection          patchCord3(adcs1, 1, agc2, 0);
-//AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
+AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
 AudioConnection          patchCord5(agc1, ILow);
 AudioConnection          patchCord6(agc2, QLow);
 AudioConnection          patchCord7(TxSelect, 0, MagPhase, 0);
@@ -277,11 +300,12 @@ AudioConnection          patchCord17(AMdet, AMLow);
 AudioConnection          patchCord18(SSB, rms1);
 AudioConnection          patchCord19(SSB, 0, Volume, 0);
 AudioConnection          patchCord20(SideTone, 0, Volume, 3);
-AudioConnection          patchCord21(SideTone, 0, TxSelect, 3);
+AudioConnection          patchCord21(SideTone, 0, TxSelect, 2);
 AudioConnection          patchCord22(AMLow, 0, Volume, 1);
 AudioConnection          patchCord23(Volume, dac1);
-//AudioConnection          patchCord24(Volume, 0, usb1, 0);
-//AudioConnection          patchCord25(Volume, 0, usb1, 1);
+AudioConnection          patchCord24(Volume, 0, usb1, 0);
+AudioConnection          patchCord25(Volume, 0, usb1, 1);
+AudioConnection          patchCord26(SSB, CWdet);
 // GUItool: end automatically generated code
 
 
@@ -291,11 +315,12 @@ void i2init(){
   Wire.begin(I2C_OP_MODE_DMA);   // use mode DMA or ISR 
   Wire.setClock(800000);     // I2C0_F  40 = 100k ,  25 = 400k.  800000 seems to work, returns 818, 600k returns 600
                              // clock stretching may produce reduced speed if clock is way to fast for the devices.
-                             // Calc that 700k speed could maybe support a tx bandwidth of 5.5k at 11029 sample rate.
+                             // Calc'd that 700k speed could maybe support a tx bandwidth of 5.5k at 11029 sample rate.
                              // It doesn't.  Nor does 800k or 1000k.
-                             // At 1/2 rate of 1/4 rate:  500k works.  Using 700k for some margin of error.  1/8 rate overall.
+                             // At 1/8 rate:  500k works.  Use 700k for some margin of error.  1/8 of 44117.
                              // At 1/6 rate get some errors at 700k. Use 800k. Should have better TX quality at 1/6 rate.
-                             // At 1/5 rate get some errors at 1000k.  Think we should stay at 1/6 rate. ( 1/6 of 44117 )
+                             // At 1/5 rate get some errors at 1000k.  Think we should stay at 1/6 rate, ( 1/6 of 44117 )
+                             // and 800k clock on I2C.
 }
 
 void i2start( unsigned char adr ){
@@ -363,18 +388,18 @@ public:
     //register uint32_t xmsb = (_div * (_fout + (int32_t)df)) % fxtal;  // xmsb = msb * fxtal/(128 * _MSC);
     //uint32_t msb128 = xmsb * 5*(32/32) - (xmsb/32);  // msb128 = xmsb * 159/32, where 159/32 = 128 * 0xFFFFF / fxtal; fxtal=27e6
 
-    if( DEBUG_MP ){
-       static int mod;
-       ++mod;
-       if( /* mod > 0 && mod < 50 || */ trigger_){
-          Serial.print( df );  Serial.write(' ');     //  testing, get a slice of data
-          Serial.print( rav_df );  Serial.write(' ');
-          //Serial.print( php ); Serial.write(' ');
-          Serial.print( magp );
-          Serial.println(); 
-       }
-       if( mod > 20000 ) mod = 0;
-    }
+//    if( DEBUG_MP ){
+//       static int mod;
+//       ++mod;
+//       if( /* mod > 0 && mod < 50 || */ trigger_){
+//          Serial.print( df );  Serial.write(' ');     //  testing, get a slice of data
+ //         Serial.print( rav_df );  Serial.write(' ');
+  //        //Serial.print( php ); Serial.write(' ');
+ //         Serial.print( magp );
+ //         Serial.println(); 
+ //      }
+ //      if( mod > 20000 ) mod = 0;
+ //   }
 
     //#define _MSC  (F_XTAL/128)  // 114% CPU load  perfect alignment
     //uint32_t msb128 = (_div * (_fout + (int32_t)df)) % fxtal;
@@ -438,20 +463,20 @@ public:
       msp3p2 = (((msc & 0x0F0000) <<4) | msp2);  // msp3 on top nibble
       uint8_t pll_regs[8] = { BB1(msc), BB0(msc), BB2(msp1), BB1(msp1), BB0(msp1), BB2(msp3p2), BB1(msp2), BB0(msp2) };
       SendRegister(26+0*8, pll_regs, 8); // Write to PLLA
-      SendRegister(26+1*8, pll_regs, 8); // Write to PLLB
+      if( rit_enabled == 0 ) SendRegister(26+1*8, pll_regs, 8); // Write to PLLB unless tx freq is fixed.
 
       msa = fvcoa / fout;     // Integer part of vco/fout
       msp1 = (128*msa - 512) | (((uint32_t)rdiv)<<20);     // msp1 and msp2=0, msp3=1, not fractional
       uint8_t ms_regs[8] = {0, 1, BB2(msp1), BB1(msp1), BB0(msp1), 0, 0, 0};
       SendRegister(42+0*8, ms_regs, 8); // Write to MS0
       SendRegister(42+1*8, ms_regs, 8); // Write to MS1
-      SendRegister(42+2*8, ms_regs, 8); // Write to MS2
+      if( rit_enabled == 0 ) SendRegister(42+2*8, ms_regs, 8); // Write to MS2
       SendRegister(16+0, 0x0C|3|0x00);  // CLK0: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
       SendRegister(16+1, 0x0C|3|0x00);  // CLK1: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
       SendRegister(16+2, 0x2C|3|0x00);  // CLK2: 0x2C=PLLB local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
       SendRegister(165, i * msa / 90);  // CLK0: I-phase (on change -> Reset PLL)
       SendRegister(166, q * msa / 90);  // CLK1: Q-phase (on change -> Reset PLL)
-      if(iqmsa != ((i-q)*msa/90)){
+      if(iqmsa != ((i-q)*msa/90)  && rit_enabled == 0 ){
         iqmsa = (i-q)*msa/90; SendRegister(177, 0xA0);
         } // 0x20 reset PLLA; 0x80 reset PLLB
       SendRegister(3, 0b11111100);      // Enable/disable clock
@@ -460,11 +485,12 @@ public:
   //Serial.print( fvcoa/1000 ); Serial.write(' ');
   //Serial.print( iqmsa );  Serial.write(' ');
   //Serial.println(d);
-
-      _fout = fout;  // cache
-      _div = d;
-      _msa128min512 = fvcoa / fxtal * 128 - 512;
-      _msb128=((uint64_t)(fvcoa % fxtal)*_MSC*128) / fxtal;
+     if( rit_enabled == 0 ){          // save tx freq variables if tx frequency changed
+        _fout = fout;  // cache
+        _div = d;
+        _msa128min512 = fvcoa / fxtal * 128 - 512;
+        _msb128=((uint64_t)(fvcoa % fxtal)*_MSC*128) / fxtal;
+     }
       
   }
 
@@ -494,7 +520,7 @@ static SI5351 si5351;
 //***********************************************************
 
 
-// the transmit process uses I2C in an interrupt context.  Must prevent other users from writing.  
+// the transmit process uses I2C in an interrupt context.  Must prevent other users from writing on I2C.  
 // No frequency changes or any OLED writes.  transmitting variable is used to disable large parts of the system.
 #define DRATE 6                      // decimation rate used in MagPhase
 #define F_SAMP_TX (44117/DRATE)      // ! setting _UA and sample rate the same, removed scaling calculation
@@ -533,13 +559,14 @@ int mag;
          if( mode == DIGI ){                         // filter the phase results, good idea or not?
             rav_df = 27853 * rav_df + 4950 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
             rav_df >>= 15;
-            if( DEBUG_MP == 0 ) dp = rav_df;         // see the difference on debug, else use new value
+           // if( DEBUG_MP == 0 ) dp = rav_df;       // see the difference on serial plotter, else use new value
+            dp = rav_df;                             // see the difference on scope dummy load when self testing tx.   
          }
        
           si5351.freq_calc_fast(dp);
           if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
               si5351.SendPLLBRegisterBulk();
-              else ++overs;                     //  Out of time, count missed I2C transaction
+              else ++overs;                     //  Out of time, count missed I2C transactions
       }     
            
    mag = MagPhase.mvalue(eer_count);
@@ -549,7 +576,8 @@ int mag;
        mag = rav_mag;
    }
    // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
-   magp = mag >> 5;
+   magp = mag = mag >> 5;
+   analogWrite( KEYOUT, mag );
 
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
@@ -580,11 +608,24 @@ int mag;
 void setup() {
    int contrast = 68;
 
-   Serial.begin(1200);                   // usb serial,  baud rate makes no difference.  Argo V baud rate is 1200.
+   pinMode( KEYOUT, OUTPUT );
+   digitalWriteFast( KEYOUT, LOW );
+   //pinMode( RX, OUTPUT );
+   //digitalWriteFast( RX, HIGH );
+   pinMode( RX, INPUT );                 // let the 10k pullup to 5 volts as opposed to holding at 3.3 with output pin
+   pinMode( TXAUDIO_EN, OUTPUT );
+   digitalWriteFast( TXAUDIO_EN, LOW );
+   pinMode( DAHpin, INPUT );                // has a 10k pullup with the microphone circuit
+   pinMode( DITpin, INPUT_PULLUP );         // Don't remember seeing any pullup on this net.
+
+   Serial.begin(1200);                   // usb serial, baud rate makes no difference.  Argo V baud rate is 1200.
 
    pinMode(EN_A,INPUT_PULLUP);
    pinMode(EN_B,INPUT_PULLUP);
    pinMode(EN_SW,INPUT_PULLUP);
+
+   analogWriteResolution(10);
+   
 
    i2init();
 
@@ -607,22 +648,21 @@ void setup() {
    freq_display();
    status_display();
    encoder();             // pick up current position
-   
-  fake_s();
 
 // Audio Library setup
   AudioNoInterrupts();
   AudioMemory(40);
   
-  SSB.gain(1,1.0);             // sub for correct sideband
+  SSB.gain(1,1.0);             // sub for USB
   SSB.gain(2,-1.0);
   SSB.gain(0,0.0);
   SSB.gain(3,0.0);
 
-  TxSelect.gain(0,0.0);
-  TxSelect.gain(1,0.0);
-  TxSelect.gain(2,0.0);
-  TxSelect.gain(3,1.0);        // !!! testing, sending sidetone
+  set_tx_source();
+//  TxSelect.gain(0,0.0);
+//  TxSelect.gain(1,0.0);
+//  TxSelect.gain(2,0.0);
+//  TxSelect.gain(3,1.0);        // !!! testing, sending sidetone
   //TxSelect.gain(3,0.0);          // not testing
 
   // AM high low pass filter,  fixed bandwidth at 4k, highpass to remove DC
@@ -636,6 +676,7 @@ void setup() {
   
   filter = 3;
   set_bandwidth();
+  CWdet.frequency(700,7);       // 600,6  1000,10 etc... aim for 10ms sample times.  Higher tones will be more accurate.(more samples)
 
   AudioInterrupts();
 
@@ -748,40 +789,111 @@ void set_Weaver_bandwidth(int bandwidth){
 void tx(){
   // what needs to change to enter tx mode
   // audio mux switching, tx bandwidth, pwm, SI5351 clocks on/off, I2C speed change, ...
+  if( mode == AM ) return;                 // should we bother with AM transmit?  Maybe if radio covered 10 meters. 
+
+  pinMode(RX, OUTPUT );
+  digitalWriteFast( RX, LOW );
+  // !!! mute rx here
   transmitting = 1;
+  if( rit_enabled == 0 ){                  // auto enable rit on transmit, cancel with long press encoder.
+     rit_enabled = 1;                      // sort of like vfo B hidden, B = A on transmit. ( pllB, pllA ).
+     step_ = 100;                          // make sure we don't tune far far away too quickly
+     freq_display();                       // show RIT in display
+     status_display();                     // show new step size
+  }
   si5351.SendRegister(3, 0b11111011);      // Enable clock 2
-  MagPhase.setmode(1);
-  EER_timer.begin(EER_function,eer_time);
-  tx_status(1);                            // clear row and print headers
+  delay(1);                                // delay or wait for I2C done flag
+  if( mode == CW ){
+    digitalWriteFast( KEYOUT, HIGH );      // !!! practice mode ?
+    // !!! sidetone on and gated 
+  }
+  else{
+    // !!! configure Q filter to pass tx bandwidth if using mic input
+    // !!! write TXAUDIO_EN if using mic input
+    // !!! write set_agc_gain for tx drive if using mic input
+    // !!! will the agc loop also work for tx compression ? or disable agc
+    // configured TX mux probably somewhere else in menu system, for microphone or usb source
+    analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+    MagPhase.setmode(1);
+    EER_timer.begin(EER_function,eer_time);
+  }
+  tx_status(1);                            // clear row and print headers on LCD only
 }
 
 void rx(){
-  // what needs to change to return to rx mode.
-  EER_timer.end();
-  MagPhase.setmode(0);
+  // what needs to change to return to rx mode. 
+
+  noInterrupts();
+  if( mode == CW ){
+    // sidetone off
+  }
+  else{
+    EER_timer.end();
+    MagPhase.setmode(0);
+    digitalWriteFast( TXAUDIO_EN, LOW );
+  }
+  pinMode( KEYOUT, OUTPUT );               // either no-ints or this line solved the double tx current on 2nd tx problem.
+  digitalWriteFast( KEYOUT, LOW );         // after timer end or it will be turned on again 
+  interrupts();
   transmitting = 0;
-  si5351.SendRegister(3, 0b11111100);      // Enable clock 0 and 1
   overs = 0;
+  si5351.SendRegister(3, 0b11111111);      // disable all clocks
   #ifdef USE_LCD
      LCD.clrRow(0);
      status_display();
-  #endif   
+  #endif
+  set_bandwidth();                         // return Q filter bandwidth if used for tx, or just some redundant processing
+  delay(1);                                // let the dust settle
+  pinMode( RX, INPUT );                    // use pullup to 5 volts.   !!! unless attn2 is enabled
+  si5351.SendRegister(3, 0b11111100);      // enable rx clocks
+  //delay(1);                                // !!! maybe needed for i2c delay to suppress any rx thumps
+  // unmute rx
+  agc_sig = 0.2;
 }
 
 
-void fake_s(){
+void S_meter( float sig){
 int i;
-  
-  OLD.gotoRowCol(1,0);
- // LCD.gotoRowCol(0,35);
-  OLD.putch('S');
-  OLD.write(0);
-  for( i = 0x80; i < 0xff; ){
-     OLD.write(i,2);  // bars 
-     OLD.write(0);    // with spaces
-     i >>= 1;
-     i |= 0x80;
-  }  
+int s;
+int j;
+
+  s = sig * 100;
+  s = constrain(s,1,9);
+  #ifdef USE_OLED
+   OLD.gotoRowCol(1,0);  OLD.putch('S'); OLD.write(0);
+  #endif
+  #ifdef USE_LCD
+   LCD.gotoRowCol(0,84-6*6); LCD.putch('S');  LCD.write(0);
+  #endif  
+
+  j = 0x80;
+  for( i = 3; i <= 9; ++i ){                 // remove agc floor reading with i = not zero
+     #ifdef USE_OLED
+      OLD.write(j,2); OLD.write(0);          // bars, space
+     #endif
+     #ifdef USE_LCD
+      LCD.write(j,2); LCD.write(0);
+     #endif
+     if( i < s ){
+        j >>= 1;
+        j |= 0x80;
+     }
+     else j = 0; 
+  }
+  s = sig * 10; j = 0xff;
+  if( s > 4 ) s = 4;
+  for( i = 1; i <= 4; ++i ){
+     if( i > s ) j = 0;
+     #ifdef USE_OLED
+      OLD.write(j,2);  OLD.write(0);
+     #endif
+     #ifdef USE_LCD
+      LCD.write(j,2);  LCD.write(0);
+     #endif 
+  }
+  #ifdef USE_OLED
+    OLD.printNumI( AudioProcessorUsage(),60,ROW4,3,' ');   // 0 to 100 percent.  More debug
+  #endif
 }
 
 
@@ -800,11 +912,11 @@ int t;
       if( encoder_user == VOLUME ) volume_adjust(t);    // generic knob routine, tap for other functions
    }
 
-   if( rms1.available() ){                              // agc, cw decode
+   if( rms1.available() ){                              // agc
         sig_rms = rms1.read();
         agc_process( sig_rms);
         report_peaks();
-        if( mode == CW ) code_read(sig_rms);
+        // if( mode == CW ) code_read(sig_rms);          // code read using amplitude level, not used now !!! remove this line
    }
 
    t = millis() - tm;                         // 1ms routines, loop for any missing counts
@@ -820,7 +932,8 @@ int t;
    }
 
    //if( Serial.availableForWrite() > 20 ) radio_control();      // CAT.  Avoid any serial blocking. fails on Teensy, works on UNO.
-   radio_control();
+   radio_control();                                                     // CAT
+   if( mode == CW && CWdet.available() ) code_read( CWdet.read() );     // cw decoder using goertzel algorithm object
    
 }
 
@@ -828,6 +941,7 @@ int t;
 void tx_status( int clr ){
 static int count;
 int num;
+int i;
 
 #ifdef USE_LCD
    if( clr ){
@@ -843,6 +957,10 @@ int num;
    LCD.printNumI(num,5*6,ROW0,2,' ');
    num = constrain(overs,0,99);
    LCD.printNumI(num,RIGHT,ROW0,2,' ');
+   num = map( magp,0,1024,0,14 );
+   LCD.gotoRowCol( 5, 0 );
+   for( i = 0; i < num; ++i ) LCD.putch('#');
+   for( ; i < 14; ++i ) LCD.putch(' ');
 #endif    
 }
 
@@ -879,17 +997,21 @@ float amp;
   // Serial.print(temp_count); Serial.write(' ');
   // Serial.print( eer_time,5 ); Serial.write(' ');
   // Serial.println( overs );
+   if( tx_source != SIDETONE ){
+      tx_source = SIDETONE;
+      set_tx_source();
+   }
    LCD.printNumF(eer_time,5,0,ROW3);
 
    eer_adj = 0;
    if( sec == 15 ) sec = 0;
-   if( sec == 3 ) tx();
-   if( sec == 12 ) rx();
+   if( sec == 3 ) tx();             // !!! two second transmit test out of 15 seconds
+   if( sec == 5 ) rx();
    ++sec;
    trigger_ = 1;
    delay(5);                           // these delays need to be longer than expected to capture edges
-   freq = ( sec & 1 ) ? 200 : 800;
-   amp  = ( sec & 1 ) ? 0.22 : 0.35;
+   freq = ( sec & 1 ) ? 1500 : 2100;
+   amp  = ( sec & 1 ) ? 0.8 : 0.85;
    SideTone.frequency(freq);
    SideTone.amplitude(amp);
    delay(20);                          // especially this one
@@ -934,7 +1056,7 @@ void button_process( int t ){
            if( STICKY_MENU ) top_menu(2);     // make selection and then
            menu_cleanup();                    // escape from menus
         }
-        if( encoder_user == FREQ && step_timer && step_ < 500000){
+        else if( encoder_user == FREQ && step_timer && step_ < 500000){
            step_ *= 10;
            if( step_ == 10000 ) step_ = 5000;
            step_timer = 1500;
@@ -949,7 +1071,13 @@ void button_process( int t ){
             }
         }
       break;   
-      case LONGPRESS: encoder_user = MENUS, top_menu(0);  break;
+      case LONGPRESS:
+         if( rit_enabled ){
+            rit_enabled = 0;
+            qsy( freq );            // reset the hidden vfo B to be equal to A.
+            freq_display();
+         }
+         else encoder_user = MENUS, top_menu(0);  break;
     }
     button_state(DONE);
 }
@@ -1011,25 +1139,51 @@ float pval;
    #endif
   
 }
-      
+
+void set_tx_source(){
+int i;
+const float gains[] = { 2.0, 0.9, 1.0, 0.0 };      // control mic gain via volume, sidetone vol via volume, usb via Computer app
+
+  for( i = 0; i < 4; ++i ) TxSelect.gain(i,0.0);
+  TxSelect.gain(tx_source,gains[tx_source]);
+  
+}
+
 void qsy( uint32_t f ){
-static int cw_offset = 700;     // !!! make global ?, add to menu if want to change on the fly
+static int cw_offset = 700;
 
     // with weaver rx, freq is the display frequency.  vfo and bfo move about with bandwidth changes.
     if( transmitting ) return;                            // can't use I2C for other purposes during transmit
     freq = f;
+
+    switch( mode ){
+       case AM:  f += 2500;  break;            // tune AM off frequency to pass the carrier tone.      
+       case CW:  f += cw_offset;               // no break
+       case LSB: f -= bfo;   break;
+       case USB:
+       case DIGI: f += bfo;  break;
+    }
+
+    si5351.freq( f, 0, 90 );
+    if( mode == CW && rit_enabled == 0 ){
+         si5351.freq_calc_fast(-cw_offset + bfo);
+         si5351.SendPLLBRegisterBulk();                   // TX at freq specified.       
+    }
+    /* old code for changing sideband in the Si5351
     //    noInterrupts(); 
     if( mode == AM ) si5351.freq(freq + 2500 ,0,90);      // pass carrier for agc, tune one sideband or down 5k for the other sideband
     else if(mode == CW){
       si5351.freq(freq + cw_offset - bfo, 90, 0);         // RX in LSB
-      si5351.freq_calc_fast(-cw_offset + bfo);
-      si5351.SendPLLBRegisterBulk();                      // TX at freq
+      if( rit_enabled == 0 ){
+         si5351.freq_calc_fast(-cw_offset + bfo);
+         si5351.SendPLLBRegisterBulk();                   // TX at freq.  PLL updates on sending cw not needed. 
+      }
     }
     else if(mode == LSB) si5351.freq(freq - bfo, 90, 0);  // RX in LSB
     else si5351.freq(freq + bfo, 0, 90);                  // RX in USB, DIGI
-    //interrupts();
-    
+    //interrupts();    
     //freq_display();     // need to delay screen update until after menu_cleanup
+    */
     
 }
 
@@ -1079,14 +1233,16 @@ void band_change( int to_band ){
   bandstack[band].freq = freq;
   bandstack[band].mode = mode;
   bandstack[band].stp  = step_;
+  bandstack[band].tx_src = tx_source;
   band = to_band;
   //mode = bandstack[band].mode;
   step_ = bandstack[band].stp;
   freq = bandstack[band].freq;
+  tx_source = bandstack[band].tx_src;
+  set_tx_source();
   mode_change(bandstack[band].mode);
 //  qsy( bandstack[band].freq );  // done in mode_change
-//  status_display();            delay until after screen clear
-  
+//  status_display();            delay until after screen clear  
 }
 
 void mode_change( int to_mode ){
@@ -1095,6 +1251,14 @@ void mode_change( int to_mode ){
   //if( to_mode == AM && mode != AM) AMon();
   mode = to_mode;
   //qsy( freq );                                     // redundant with weaver rx, to get phasing correct on QSD
+  if( mode == CW || mode == LSB ){
+     SSB.gain(1,1.0);             // add for LSB
+     SSB.gain(2,1.0);
+  }
+  else{
+     SSB.gain(1,1.0);             // sub for USB
+     SSB.gain(2,-1.0);
+  }
   set_af_gain(af_gain);                              // listen to the correct audio path
   set_bandwidth();                                   // bandwidth is mode dependent
   delay(1);
@@ -1205,7 +1369,8 @@ char priv[2];
     LCD.setFont(MediumNumbers);
     LCD.printNumI(freq/1000,0,ROW1,5,'/');       // '/' is a leading space with altered font table
     LCD.setFont(SmallFont);
-    LCD.printNumI(rem,62,ROW2,3,'0');
+    if( rit_enabled ) LCD.print((char * )"RIT",62,ROW2);
+    else LCD.printNumI(rem,62,ROW2,3,'0');
     LCD.print( priv, RIGHT, ROW1 );
    #endif
 
@@ -1213,7 +1378,8 @@ char priv[2];
     OLD.setFont(MediumNumbers);
     OLD.printNumI(freq/1000,4*12,ROW0,5,'/');
     OLD.setFont(SmallFont);
-    OLD.printNumI(rem,9*12,ROW1,3,'0');
+    if( rit_enabled ) OLD.print((char * )"RIT",9*12,ROW1);
+    else OLD.printNumI(rem,9*12,ROW1,3,'0');
     OLD.print( priv, RIGHT, ROW0 );
    #endif
 }
@@ -1221,30 +1387,25 @@ char priv[2];
 
 #define AGC_FLOOR  0.05             //  was 0.035,  0.07 in my QCX_IF program
 #define AGC_SLOPE 6
-#define AGC_HANG   300             // 3 * hang == ms time
+#define AGC_HANG   500              //  hang == ms time
 void agc_process( float reading ){
-static float sig = AGC_FLOOR;
+//static float sig = AGC_FLOOR;
 static int hang;
 float g;
 int ch;                            // flag change needed
 
     ch = 0;
     
-    if( reading > sig && reading > AGC_FLOOR ){       // attack
-       sig += 0.001,  hang = 0, ch = 1;
+    if( reading > agc_sig && reading > AGC_FLOOR ){       // attack
+       agc_sig += 0.001,  hang = 0, ch = 1;
     }
-    else if( sig > AGC_FLOOR && hang++ > AGC_HANG ){  // decay
-       sig -= 0.00005, ch = 1;
+    else if( agc_sig > AGC_FLOOR && hang++ > AGC_HANG/3 ){  // decay
+       agc_sig -= 0.0001, ch = 1;
     }
 
     if( ch ){                                         // change needed
-      if( encoder_user == FREQ && transmitting == 0 ){
-        OLD.printNumF( sig,2,0,ROW6 );            // !!! move these 4 lines to an S meter function
-        OLD.printNumI( AudioProcessorUsage(),60,ROW6,3,' ');   // 0 to 100 percent.  More debug
-        LCD.print((char *)"Sig ",84-6*6,ROW0);
-        LCD.printNumI((int)(sig * 100.0),RIGHT,ROW0,3,' '); 
-      }   
-      g = sig - AGC_FLOOR;
+      if( encoder_user == FREQ && transmitting == 0 ) S_meter( agc_sig );
+      g = agc_sig - AGC_FLOOR;
       g *= AGC_SLOPE;
       g = agc_gain - g;
       if( g < 0 ) g = 0.1;
@@ -1559,6 +1720,81 @@ char cmd2;
 
 /********************* end Argo V CAT ******************************/
 
+int read_paddles(){
+int pdl;
+
+   pdl = digitalReadFast( DAHpin ) << 1;
+   pdl += digitalReadFast( DITpin );
+
+   pdl ^= 3;         // make logic positive
+   // swap
+   // pdl <<= 1;
+   // if( pdl & 4 ) pdl += 1;
+   // pdl &= 3;
+
+   return pdl;
+}
+
+void side_tone_on(){
+  
+}
+
+void side_tone_off(){
+  
+}
+
+
+// http://cq-cq.eu/DJ5IL_rt007.pdf      all about the history of keyers
+
+#define DIT 1
+#define DAH 2
+#define WPM 14
+void keyer( ){
+static int state;
+static int count;
+static int cel;           // current element
+static int nel;           // next element - memory
+static int arm;           // edge triggered memory mask
+static int iam;           // level triggered iambic mask
+int pdl;
+
+   pdl = read_paddles();
+   if( count ) --count;
+
+   switch( state ){
+     case 0:                               // idle
+        cel = ( nel ) ? nel : pdl;         // get memory or read the paddles
+        nel = 0;                           // clear memory
+        if( cel == DIT + DAH ) cel = DIT;
+        if( cel == 0 ) break;
+        iam = (DIT+DAH) ^ cel;
+        arm = ( iam ^ pdl ) & iam;         // memory only armed if alternate paddle is not pressed at this time, edge trigger
+        // arm = iam;                      // mode B - your descent into madness begins.  Level triggered memory.
+        // iam = cel;                      // ultimatic mode
+        count = 1200/WPM;
+        if( cel == DAH ) count *= 3;
+        state = 1;
+        side_tone_on();
+     break; 
+     case 1:                                  // timing the current element. look for edge of the other paddle
+        if( count ) nel = ( nel ) ? nel : pdl & arm;
+        else{
+           count = 1200/WPM;
+           state = 2;
+           side_tone_off();
+        }
+     break;   
+     case 2:                                  // timing the inter-element space
+        if( count ) nel = ( nel ) ? nel : pdl & arm;
+        else{
+           nel = ( nel ) ? nel : pdl & iam;   // sample alternate at end of element and element space
+           state = 0;
+        }
+     break;   
+   }
+  
+}
+
 
 // ***************   group of functions for a read behind morse decoder    ******************
 //   attempts to correct for incorrect code spacing, the most common fault.
@@ -1567,13 +1803,26 @@ int cread_indx;
 int dah_table[8] = { 20,20,20,20,20,20,20,20 };
 int dah_in;
 
+// try using both the tone detect and rms level added together, not sure they works well alone. 
 
 int cw_detect(float av ){
 int det;                        // cw mark space detect
 static int count;               // mark,space counts
 static float rav;               // running average of signals
+static int last_good;           // tone returns zero?
 int stored;
 
+static int mod;
+if( ++mod > 100 ){
+ LCD.printNumF(av,4,LEFT,ROW3);
+ LCD.printNumF(sig_rms,4,RIGHT,ROW3);
+ mod = 0;
+}
+ 
+   if( av < 0.0001 ) av = last_good;
+   else last_good = av;
+   av += sig_rms;
+   
    rav = 31.0*rav + av;     // try a longer time constant here.  Maybe shorter for faster code and
    rav /= 32.0;             // longer for slower code would work best to avoid noise in between characters.
                             // trade off for fast fading signals being lost with longer constant.
@@ -1861,10 +2110,16 @@ struct MENU bandwidth_menu = {
     {"Narrow", "CW-Wide", "2700", "3000", "3300", "3600" }
 };
 
+struct MENU tx_source_menu = {
+    3,
+    "Tx Source",
+    {"Mic", "USB", "Side Tn"}
+};
+
 struct MENU main_menu = {
-  3,
+  4,
   "Top Menu",
-  { "Band", "Mode", "Filter" }
+  { "Band", "Mode", "Filter", "Tx Src" }
 };
 
 
@@ -1898,7 +2153,7 @@ int ret_val;
               case 0: active_menu = &band_menu;  def_val = band; state = 1; break;
               case 1: active_menu = &mode_menu;  def_val = mode; state = 2; break;
               case 2: active_menu = &bandwidth_menu; def_val = filter; state = 3; break;
-              //case 3: active_menu = &multi_2_menu; def_val = multi2; state = 4; break;              
+              case 3: active_menu = &tx_source_menu; def_val = tx_source; state = 4; break;              
             }
             //if( transmitting && top_sel < 2 ) tx_off(1);
             def_val = top_menu2(def_val,active_menu, 0 );   // init a new submenu
@@ -1914,6 +2169,11 @@ int ret_val;
          case 3:
             filter = def_val;
             set_bandwidth();
+            ret_val = state = 0;
+         break;
+         case 4:
+            tx_source = def_val;
+            set_tx_source();
             ret_val = state = 0;
          break;
          //default:  state = 0; ret_val = 0; break;  // temp
