@@ -14,7 +14,7 @@ The Teensy audio library operates at 44khz and magically streams audio between o
 
 #### The current design.
 
-!(Design.png)
+!(https://github.com/roncarr880/uSDX_Teensy/blob/main/Design.png)
 The receiver uses the Weaver method of decoding SSB.  The vfo is not placed at zero beat with the desired signal but instead is placed right in the middle of the signal.  The I and Q audio is low pass filtered at 1/2 of the desired audio bandwidth.  It is then mixed with a complex BFO also at 1/2 the bandwidth in frequency ( if bandwidth is 3000 hz then the BFO is at 1500 hz ).  The result is added or subracted to get LSB or USB.
 
 
