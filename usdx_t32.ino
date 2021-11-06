@@ -114,6 +114,7 @@
 #define USE_LCD
 
 #define DEBUG_MP  0                  // serial print tx magnitude and phase data for arduino serial plotter
+                                     // !!! careful, this actually transmits now.
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
 // 84 x 48 pixels or 6 lines by 14 characters in text mode
@@ -194,7 +195,8 @@ int tx_source = USBc; // starting on 17 meters FT8
 // Menus:  Long press to enter
 //   STICKY_MENU 0 :  Tap makes a selection and exits.   Double tap exits without a selection.
 //   STICKY_MENU 1 :  Tap makes a selection.  Double tap makes a selection and exits.
-#define STICKY_MENU 1
+// Sticky on is good for making a bunch of menu setups all at once, off is good for making just one change. 
+#define STICKY_MENU 0
 
 struct BAND_STACK{
    int mode;
@@ -202,7 +204,7 @@ struct BAND_STACK{
    int stp;
    int d;             // pre-calculated divider for each band. Can run Si5351 in spec except on 80 meters.
    int tx_src;
-   // could expand to relay commands, filter width etc.  Whatever plays nicely.
+   int fltr;
 };
 
 // "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune"    mem tune special case
@@ -213,12 +215,12 @@ struct BAND_STACK{
 #define DIGI 4
 
 struct BAND_STACK bandstack[] = {    // index is the band
-  { LSB ,  3928000, 1000, 126, MIC },
-  { USB ,  5330500,  500, 126, MIC },     // special 500 step for this band, not reachable in the normal step changes.
-  { LSB ,  7163000, 1000, 100, MIC },
-  { CW  , 10105000,  100,  68, USBc },
-  { USB , 14100000, 1000,  54, MIC },
-  { DIGI, 18100000, 1000,  40, USBc }
+  { LSB ,  3928000, 1000, 126, MIC,  4 },
+  { USB ,  5330500,  500, 126, MIC,  5 },     // special 500 step for this band, not reachable in the normal step changes.
+  { LSB ,  7163000, 1000, 100, MIC,  3 },
+  { CW  , 10105000,  100,  68, USBc, 1 },
+  { USB , 14100000, 1000,  54, MIC,  3 },
+  { DIGI, 18100000, 1000,  40, USBc, 3 }
 };
 
 uint32_t freq = 18100000L;     // probably should init these vars from the bandstack
@@ -788,31 +790,40 @@ void set_Weaver_bandwidth(int bandwidth){
 
 void tx(){
   // what needs to change to enter tx mode
-  // audio mux switching, tx bandwidth, pwm, SI5351 clocks on/off, I2C speed change, ...
   if( mode == AM ) return;                 // should we bother with AM transmit?  Maybe if radio covered 10 meters. 
 
   pinMode(RX, OUTPUT );
   digitalWriteFast( RX, LOW );
-  // !!! mute rx here
+  set_af_gain(0.0);                        // mute rx
   transmitting = 1;
+  si5351.SendRegister(3, 0b11111011);      // Enable clock 2, disable QSD
   if( rit_enabled == 0 ){                  // auto enable rit on transmit, cancel with long press encoder.
      rit_enabled = 1;                      // sort of like vfo B hidden, B = A on transmit. ( pllB, pllA ).
-     step_ = 100;                          // make sure we don't tune far far away too quickly
+     step_ = 10;                           // make sure we don't tune far far away too quickly
      freq_display();                       // show RIT in display
      status_display();                     // show new step size
   }
-  si5351.SendRegister(3, 0b11111011);      // Enable clock 2
   delay(1);                                // delay or wait for I2C done flag
   if( mode == CW ){
-    digitalWriteFast( KEYOUT, HIGH );      // !!! practice mode ?
-    // !!! sidetone on and gated 
+    pinMode(KEYOUT,OUTPUT);
+    digitalWriteFast( KEYOUT, HIGH );      //  cw practice mode done elsewhere, doesn't call this function
+                                           //  sidetone on and gated done elsewhere
   }
+
+    //  0.51763809  butterworth Q's 3 cascade
+  //  0.70710678
+  //  1.9318517
   else{
-    // !!! configure Q filter to pass tx bandwidth if using mic input
-    // !!! write TXAUDIO_EN if using mic input
-    // !!! write set_agc_gain for tx drive if using mic input
-    // !!! will the agc loop also work for tx compression ? or disable agc
-    // configured TX mux probably somewhere else in menu system, for microphone or usb source
+    if( tx_source == MIC ){
+       digitalWriteFast( TXAUDIO_EN, HIGH );           // write TXAUDIO_EN if using mic input
+       QLow.setHighpass(0,300,0.707);                  //  configure Q filter to pass tx bandwidth if using mic input
+       QLow.setLowpass( 1,2800,0.51763809);
+       QLow.setLowpass( 2,2800,0.70710678);
+       QLow.setLowpass( 3,2800,1.9318517);
+       agc2.gain(2.0);                                 // write set_agc_gain for tx drive if using mic input
+                                                       // !!! should tx gain be adjusted with agc2 or with TX_Select
+       // configured TX mux probably somewhere else in menu system, for microphone or usb source         
+    }
     analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
     MagPhase.setmode(1);
     EER_timer.begin(EER_function,eer_time);
@@ -825,18 +836,18 @@ void rx(){
 
   noInterrupts();
   if( mode == CW ){
-    // sidetone off
+                                           // sidetone off done elsewhere
   }
   else{
     EER_timer.end();
     MagPhase.setmode(0);
-    digitalWriteFast( TXAUDIO_EN, LOW );
   }
   pinMode( KEYOUT, OUTPUT );               // either no-ints or this line solved the double tx current on 2nd tx problem.
   digitalWriteFast( KEYOUT, LOW );         // after timer end or it will be turned on again 
   interrupts();
   transmitting = 0;
   overs = 0;
+  digitalWriteFast( TXAUDIO_EN, LOW );    // turn FET audio switch off if its on
   si5351.SendRegister(3, 0b11111111);      // disable all clocks
   #ifdef USE_LCD
      LCD.clrRow(0);
@@ -847,8 +858,8 @@ void rx(){
   pinMode( RX, INPUT );                    // use pullup to 5 volts.   !!! unless attn2 is enabled
   si5351.SendRegister(3, 0b11111100);      // enable rx clocks
   //delay(1);                                // !!! maybe needed for i2c delay to suppress any rx thumps
-  // unmute rx
-  agc_sig = 0.2;
+  set_af_gain( af_gain );                  // unmute rx
+  agc_sig = 0.2;                           // start with 20 over volume setting in agc system
 }
 
 
@@ -927,6 +938,7 @@ int t;
          if( step_timer ) --step_timer;       // 1.5 seconds to dtap freq step up to 500k 
          int t2 = button_state(0);
          if( t2 > DONE ) button_process(t2);
+         if( mode == CW ) keyer();
       }
       if( transmitting ) tx_status(0);
    }
@@ -1234,12 +1246,14 @@ void band_change( int to_band ){
   bandstack[band].mode = mode;
   bandstack[band].stp  = step_;
   bandstack[band].tx_src = tx_source;
+  bandstack[band].fltr = filter;
   band = to_band;
   //mode = bandstack[band].mode;
   step_ = bandstack[band].stp;
   freq = bandstack[band].freq;
   tx_source = bandstack[band].tx_src;
   set_tx_source();
+  filter = bandstack[band].fltr;
   mode_change(bandstack[band].mode);
 //  qsy( bandstack[band].freq );  // done in mode_change
 //  status_display();            delay until after screen clear  
@@ -1262,7 +1276,7 @@ void mode_change( int to_mode ){
   set_af_gain(af_gain);                              // listen to the correct audio path
   set_bandwidth();                                   // bandwidth is mode dependent
   delay(1);
-  si5351.SendRegister(177, 0xA0);                    // reset PLL's twice, sometimes on wrong sideband or never never land
+  si5351.SendRegister(177, 0xA0);                    // reset PLL's twice, sometimes on wrong sideband or in never never land
 }
 
 /*
@@ -1369,18 +1383,26 @@ char priv[2];
     LCD.setFont(MediumNumbers);
     LCD.printNumI(freq/1000,0,ROW1,5,'/');       // '/' is a leading space with altered font table
     LCD.setFont(SmallFont);
-    if( rit_enabled ) LCD.print((char * )"RIT",62,ROW2);
-    else LCD.printNumI(rem,62,ROW2,3,'0');
+    LCD.printNumI(rem,62,ROW2,3,'0');
     LCD.print( priv, RIGHT, ROW1 );
+    if( rit_enabled ){
+       LCD.clrRow( 1, 0, 6*4 );
+       LCD.clrRow( 2, 0, 6*4 );
+       LCD.print((char *)"RIT",0,ROW2 );
+    }
    #endif
 
    #ifdef USE_OLED
     OLD.setFont(MediumNumbers);
     OLD.printNumI(freq/1000,4*12,ROW0,5,'/');
     OLD.setFont(SmallFont);
-    if( rit_enabled ) OLD.print((char * )"RIT",9*12,ROW1);
-    else OLD.printNumI(rem,9*12,ROW1,3,'0');
+    OLD.printNumI(rem,9*12,ROW1,3,'0');
     OLD.print( priv, RIGHT, ROW0 );
+    if( rit_enabled ){
+       OLD.clrRow( 0, 4*12, 4*12+6*4 );
+       OLD.clrRow( 1, 4*12, 4*12+6*4 );
+       OLD.print((char *)"RIT",4*12,ROW1 );      
+    }
    #endif
 }
 
@@ -1735,12 +1757,19 @@ int pdl;
    return pdl;
 }
 
-void side_tone_on(){
+void side_tone_on(){        // call tx() if not in practice mode
+
+  SideTone.frequency(700);
+  SideTone.amplitude(0.3);
+  Volume.gain(0,0.0);
+  Volume.gain(3,af_gain);
   
 }
 
 void side_tone_off(){
-  
+
+  Volume.gain(3,0.0);
+  Volume.gain(0,af_gain);
 }
 
 
