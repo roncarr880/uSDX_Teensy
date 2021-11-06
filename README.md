@@ -18,6 +18,6 @@ The Teensy audio library operates at 44khz and magically streams audio between o
 
 The receiver uses the Weaver method of decoding SSB.  The vfo is not placed at zero beat with the desired signal but instead is placed right in the middle of the signal.  The I and Q audio is low pass filtered at 1/2 of the desired audio bandwidth.  It is then mixed with a complex BFO also at 1/2 the bandwidth in frequency ( if bandwidth is 3000 hz then the BFO is at 1500 hz ).  The result is added or subracted to get LSB or USB.
 
-The transmitter re-uses a couple of the receiver audio blocks for the microphone input. The microphone, usb, or the sidetone can be selected as the transmit audio source, and the custom object MagPhase processes the audio and generates the EER signals to the Si5351 and PWM modulator.
+The transmitter re-uses a couple of the receiver audio blocks for the microphone input. The microphone, usb, or the sidetone can be selected as the transmit audio source, and the custom object MagPhase processes the audio and calculates the EER data for the Si5351 and PWM modulator.
 
 
