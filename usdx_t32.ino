@@ -54,10 +54,16 @@
  *    Version 1.48  Wired DIT, DAH, RX, KEYOUT signals to the Teensy 3.2.  First transmit test sucessful.  Added CW keyer code.  Added 
  *                  attenuator ( tx/rx FET ).  
  *    Version 1.49  Many little changes with menu and cw keyer, speed, practice mode, sidetone, etc. 
+ *    Version 1.50  CW keying had pops on one side of the paddle only, probably due to the 1uf I put in place of the 220nf.  Added a
+ *                  manual jumper to isolate the nets when in CW mode and connect them in SSB mode. Moved the Si5351 code into
+ *                  a separate file. 
  *             
  */
 
-#define VERSION 1.49
+#define VERSION 1.50
+
+// Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
+// Mic should have Mic on Tip, PTT on Ring for this radio.
 
 /*
  * The encoder switch works like this:
@@ -70,8 +76,33 @@
  *   
  * RIT is automatically enabled upon transmit.  Cancel with a long press to return to normal frequency tuning.  RIT is not tracked in 
  * the usual sense, instead Si5351 PLLB is not updated with new frequency changes when RIT is active. (  A hidden vfo B )
+ * 
+ * 
+ * ***********  OR you can think of the encode switch this way
+ * There are 3 actions: tap, double tap, and long press.
+ * 
+ * The primary use of tap is to cycle through tuning step sizes.
+ *    Secondary use of tap is to make selections in the menu and to cycle through "volume" selections.
+ * The primary use of double tap is to bring up the volume control and to exit.   
+ *    Secondary use of double tap is to increase the tuning step higher than 1k. ( tap then double tap, double tap etc. )
+ *    Secondary use of double tap is to escape out of the menu when using the sticky menu complile option.
+ * The primary use of long press is to bring up the menu system.   
+ *    Seconday use of long press is to turn off RIT.
  */
-//   !!! to do - test RIT actually works as described and tx remains fixed for CW and SSB modes. 
+
+//  Issues / to do 
+//  test RIT actually works as described and tx remains fixed for CW and SSB modes.
+//  test Transmitter in microphone voice mode, and computer voice mode
+//  CW filters have two peaks, one as desired and one up around 1200 hz
+//  CW detect does not work well / tone object returns zero often.
+//  Is there any way to show modulation amount on the OLED? Would need to sneak in I2C writes during transmit.
+//  Investigate the improved branch and the sending of one less register during transmit.
+//  Add a Tone control.
+//  Consider FFT display, maybe plot only +- 11k as the Tayloe detector rolls off sharply
+//  C4 C7 - does adding them cause processor noise in the front end.
+//  Measure audio image response, and alias images at +-44k away.
+ 
+  
  
  // QCX pin definitions mega328 to Teensy 3.2
 /* 
@@ -87,9 +118,9 @@
 #define SIDETONE 9        //PB1    (pin 15)     A14  DAC wired seperately from SIDETONE net
 #define KEY_OUT 10        //PB2    (pin 16)     5     + PullDown  10k ( need PWM pin )
 #define SIG_OUT 11        //PB3    (pin 17)     PullDown  10k, no Teensy connection to SIG_OUT net
-#define DAH     12        //PB4    (pin 18)     22
-#define DIT     13        //PB5    (pin 19)     23
-#define AUDIO1  14        //PC0/A0 (pin 23)     A2   ( or swap ? )
+#define DAH     12        //PB4    (pin 18)     22      on jack it is tip
+#define DIT     13        //PB5    (pin 19)     23      on jack it is ring
+#define AUDIO1  14        //PC0/A0 (pin 23)     A2
 #define AUDIO2  15        //PC1/A1 (pin 24)     A3
 #define DVM     16        //PC2/A2 (pin 25)     goes to source of a BS170, drain to A3 ( Q audio2 ), gate switched by 14
 #define BUTTONS 17        //PC3/A3 (pin 26)     12     single digital encoder switch,  active low
@@ -116,9 +147,9 @@
 #define USE_OLED
 #define USE_LCD
 
-                                     // !!! careful, this actually transmits now if set to 2 although think will delete this
-                                     // eventually and remove all the if statements in causes in the code 
-#define DEBUG_MP  0                  //  1 - serial print tx magnitude and phase data for arduino serial plotter
+                                      
+#define DEBUG_MP  0                  // !!! careful, this actually transmits now if set to 2.  Think will delete this
+                                     // eventually and remove all the if statements it causes in the code
                               
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
@@ -194,9 +225,9 @@ int encoder_user;
 int volume_user;
 
 #define MIC 0
-#define USBc 1        // conflicts with upper side band def USB, so be careful here.  
+#define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
 #define SIDETONE 2 
-int tx_source = USBc; // starting on 17 meters FT8
+int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out. 
 
 
 // Menus:  Long press to enter
@@ -423,180 +454,7 @@ void i2stop( ){
 }
 
 
-
-/************************************************************************/
-
-/********  code from the uSDX project   *********/
-//  Copyright 2019, 2020   Guido PE1NNZ <pe1nnz@amsat.org>
-//
-//  Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-//  and associated documentation files (the "Software"), to deal in the Software without restriction,
-//  including without limitation the rights to use, copy, modify, merge, publish, distribute,
-//  sublicense, and/or sell copies of the Software, and to permit persons to whom the Software
-//  is furnished to do so, subject to the following conditions: The above copyright notice and this
-//  permission notice shall be included in all copies or substantial portions of the Software.
-//  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
-//  BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-//  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-//  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-//  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-//  The Si5351 code
-class SI5351 {
-public:
-  volatile int32_t _fout;
-  volatile uint8_t _div;  // note: uint8_t asserts fout > 3.5MHz with R_DIV=1
-  volatile uint16_t _msa128min512;
-  volatile uint32_t _msb128;
-  volatile uint8_t pll_regs[8];
-
-  #define BB0(x) ((uint8_t)(x))           // Bash byte x of int32_t
-  #define BB1(x) ((uint8_t)((x)>>8))
-  #define BB2(x) ((uint8_t)((x)>>16))
-
-  #define FAST __attribute__((optimize("Ofast")))
-
-  #define F_XTAL 27003380            // Crystal freq in Hz, nominal frequency 27004300
-  //#define F_XTAL 25004000          // Alternate SI clock
-  //#define F_XTAL 20004000          // A shared-single 20MHz processor/pll clock
-  volatile uint32_t fxtal = F_XTAL;
-
-  inline void FAST freq_calc_fast(int16_t df)  // note: relies on cached variables: _msb128, _msa128min512, _div, _fout, fxtal
-  { 
-    #define _MSC  0x80000  //0x80000: 98% CPU load   0xFFFFF: 114% CPU load
-    uint32_t msb128 = _msb128 + ((int64_t)(_div * (int32_t)df) * _MSC * 128) / fxtal;
-
-    //#define _MSC  0xFFFFF  // Old algorithm 114% CPU load, shortcut for a fixed fxtal=27e6
-    //register uint32_t xmsb = (_div * (_fout + (int32_t)df)) % fxtal;  // xmsb = msb * fxtal/(128 * _MSC);
-    //uint32_t msb128 = xmsb * 5*(32/32) - (xmsb/32);  // msb128 = xmsb * 159/32, where 159/32 = 128 * 0xFFFFF / fxtal; fxtal=27e6
-
-    if( DEBUG_MP == 1 ){
-       static int mod;
-       ++mod;
-       if( /* mod > 0 && mod < 50 || */ trigger_){
-          Serial.print( df );  Serial.write(' ');     //  testing, get a slice of data
-          Serial.print( rav_df );  Serial.write(' ');
-          //Serial.print( php ); Serial.write(' ');
-          Serial.print( magp );
-          Serial.println(); 
-       }
-       if( mod > 20000 ) mod = 0;
-    }
-
-    //#define _MSC  (F_XTAL/128)  // 114% CPU load  perfect alignment
-    //uint32_t msb128 = (_div * (_fout + (int32_t)df)) % fxtal;
-
-    uint32_t msp1 = _msa128min512 + msb128 / _MSC;  // = 128 * _msa + msb128 / _MSC - 512;
-    uint32_t msp2 = msb128 % _MSC;  // = msb128 - msb128/_MSC * _MSC;
-
-    //pll_regs[0] = BB1(msc);  // 3 regs are constant
-    //pll_regs[1] = BB0(msc);
-    //pll_regs[2] = BB2(msp1);
-    pll_regs[3] = BB1(msp1);
-    pll_regs[4] = BB0(msp1);
-    pll_regs[5] = ((_MSC&0xF0000)>>(16-4))|BB2(msp2); // top nibble MUST be same as top nibble of _MSC !
-    pll_regs[6] = BB1(msp2);
-    pll_regs[7] = BB0(msp2);
-  }
-  #define SI5351_ADDR 0x60              // I2C address of Si5351   (typical)
-
-  inline void SendPLLBRegisterBulk(){
-    i2start( SI5351_ADDR );         //i2c.start();
-                                    //i2c.SendByte(SI5351_ADDR << 1);
-    i2send( 26+1*8 + 3 );           //i2c.SendByte(26+1*8 + 3);  // Write to PLLB
-    i2send( pll_regs[3]);           //i2c.SendByte(pll_regs[3]);
-    i2send( pll_regs[4]);           //i2c.SendByte(pll_regs[4]);
-    i2send( pll_regs[5]);           //i2c.SendByte(pll_regs[5]);
-    i2send( pll_regs[6]);           //i2c.SendByte(pll_regs[6]);
-    i2send( pll_regs[7]);           //i2c.SendByte(pll_regs[7]);
-    i2stop();                       //i2c.stop();
-  }
-
-  void SendRegister(uint8_t reg, uint8_t* data, uint8_t n){
-    i2start( SI5351_ADDR );         //    i2c.start();
-                                    //i2c.SendByte(SI5351_ADDR << 1);
-    i2send(reg);                    //i2c.SendByte(reg);
-    while (n--) i2send(*data++);    //i2c.SendByte(*data++);
-    i2stop();                       //i2c.stop();      
-  }
-  void SendRegister(uint8_t reg, uint8_t val){ SendRegister(reg, &val, 1); }
-  
-  int16_t iqmsa; // to detect a need for a PLL reset
-  
-  void freq(uint32_t fout, uint8_t i, uint8_t q){  // Set a CLK0,1 to fout Hz with phase i, q
-      uint8_t msa; uint32_t msb, msc, msp1, msp2, msp3p2;
-      uint8_t rdiv = 0;             // CLK pin sees fout/(2^rdiv)
-      
-      //if(fout < 500000){ rdiv = 7; fout *= 128; }; // Divide by 128 for fout 4..500kHz
-      //uint16_t d = (16 * fxtal) / fout;  // Integer part
-      //if(fout > 30000000) d = (34 * fxtal) / fout; // when fvco is getting too low (400 MHz)
-      
-      uint16_t d = bandstack[band].d;
-      if( (d * (fout - 5000) / fxtal) != (d * (fout + 5000) / fxtal) ) d -= 2;     // d++;
-      // Test if multiplier remains same for freq deviation +/- 5kHz, if not use different divider to make same
-      // if(d % 2) d++; // forced even divider from bandstack // even numbers preferred for divider (AN619 p.4 and p.6)
-      uint32_t fvcoa = d * fout; 
-      msa = fvcoa / fxtal;     // Integer part of vco/fxtal
-      msb = ((uint64_t)(fvcoa % fxtal)*_MSC) / fxtal; // Fractional part
-      msc = _MSC;
-      
-      msp1 = 128*msa + 128*msb/msc - 512;
-      msp2 = 128*msb - 128*msb/msc * msc;    // msp3 == msc        
-      msp3p2 = (((msc & 0x0F0000) <<4) | msp2);  // msp3 on top nibble
-      uint8_t pll_regs[8] = { BB1(msc), BB0(msc), BB2(msp1), BB1(msp1), BB0(msp1), BB2(msp3p2), BB1(msp2), BB0(msp2) };
-      SendRegister(26+0*8, pll_regs, 8); // Write to PLLA
-      if( rit_enabled == 0 ) SendRegister(26+1*8, pll_regs, 8); // Write to PLLB unless tx freq is fixed.
-
-      msa = fvcoa / fout;     // Integer part of vco/fout
-      msp1 = (128*msa - 512) | (((uint32_t)rdiv)<<20);     // msp1 and msp2=0, msp3=1, not fractional
-      uint8_t ms_regs[8] = {0, 1, BB2(msp1), BB1(msp1), BB0(msp1), 0, 0, 0};
-      SendRegister(42+0*8, ms_regs, 8); // Write to MS0
-      SendRegister(42+1*8, ms_regs, 8); // Write to MS1
-      if( rit_enabled == 0 ) SendRegister(42+2*8, ms_regs, 8); // Write to MS2
-      SendRegister(16+0, 0x0C|3|0x00);  // CLK0: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
-      SendRegister(16+1, 0x0C|3|0x00);  // CLK1: 0x0C=PLLA local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
-      SendRegister(16+2, 0x2C|3|0x00);  // CLK2: 0x2C=PLLB local msynth; 3=8mA; 0x40=integer division; bit7:6=0->power-up
-      SendRegister(165, i * msa / 90);  // CLK0: I-phase (on change -> Reset PLL)
-      SendRegister(166, q * msa / 90);  // CLK1: Q-phase (on change -> Reset PLL)
-      if(iqmsa != ((i-q)*msa/90)  && rit_enabled == 0 ){
-        iqmsa = (i-q)*msa/90; SendRegister(177, 0xA0);
-        } // 0x20 reset PLLA; 0x80 reset PLLB
-      SendRegister(3, 0b11111100);      // Enable/disable clock
-
-  //Serial.print( fout/1000 ); Serial.write(' ');        // !!! debug
-  //Serial.print( fvcoa/1000 ); Serial.write(' ');
-  //Serial.print( iqmsa );  Serial.write(' ');
-  //Serial.println(d);
-     if( rit_enabled == 0 ){          // save tx freq variables if tx frequency changed
-        _fout = fout;  // cache
-        _div = d;
-        _msa128min512 = fvcoa / fxtal * 128 - 512;
-        _msb128=((uint64_t)(fvcoa % fxtal)*_MSC*128) / fxtal;
-     }
-      
-  }
-
-/*
-  uint8_t RecvRegister(uint8_t reg){
-    i2c.start();  // Data write to set the register address
-    i2c.SendByte(SI5351_ADDR << 1);
-    i2c.SendByte(reg);
-    i2c.stop();
-    i2c.start(); // Data read to retrieve the data from the set address
-    i2c.SendByte((SI5351_ADDR << 1) | 1);
-    uint8_t data = i2c.RecvByte(true);
-    i2c.stop();
-    return data;
-  }
-*/  
-//  void powerDown(){
-//    for(int addr = 16; addr != 24; addr++) SendRegister(addr, 0b10000000);  // Conserve power when output is disabled
-//    SendRegister(3, 0b11111111); // Disable all CLK outputs    
-//  }
-//  #define SI_CLK_OE 3 
-
-};
-static SI5351 si5351;
+#include "si5351_usdx.cpp"
 
 
 //***********************************************************
@@ -698,6 +556,8 @@ void setup() {
    pinMode( TXAUDIO_EN, OUTPUT );
    digitalWriteFast( TXAUDIO_EN, LOW );
    pinMode( DAHpin, INPUT );                // has a 10k pullup with the microphone circuit
+                                            // but I added a jumper connection for ssb
+                                            // so this needs to be INPUT_PULLUP when in CW mode and jumper open in CW position.
    pinMode( DITpin, INPUT_PULLUP );         // Don't remember seeing any pullup on this net.
 
    Serial.begin(1200);                   // usb serial, baud rate makes no difference.  Argo V baud rate is 1200.
@@ -1298,7 +1158,7 @@ static int cw_offset = 700;
        case DIGI: f += bfo;  break;
     }
 
-    si5351.freq( f, 0, 90 );
+    si5351.freq( f, 0, 90, bandstack[band].d );
     if( mode == CW && rit_enabled == 0 ){
          si5351.freq_calc_fast(-cw_offset + bfo);
          si5351.SendPLLBRegisterBulk();                   // TX at freq specified.       
@@ -1408,6 +1268,8 @@ void mode_change( int to_mode ){
   }
   set_af_gain(af_gain);                              // listen to the correct audio path
   set_bandwidth();                                   // bandwidth is mode dependent
+  if( mode == CW ) pinMode(DAHpin, INPUT_PULLUP);    // accomdate the hardware jumper difference when in CW mode. 
+  else pinMode(DAHpin, INPUT );                      // Let 10k pullup work alone. 
   delay(1);
   si5351.SendRegister(177, 0xA0);                    // reset PLL's twice, sometimes on wrong sideband or in never never land
 }
