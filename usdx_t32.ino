@@ -247,15 +247,26 @@ int step_timer;                // allows double tap to backup the freq step to 5
                                // and returns to the normal double tap command ( volume )
 float af_gain = 0.3;
 float agc_gain = 1.0;
-float side_gain = 0.3;         // side tone volume, also af_gain affects side tone volume. agc_gain doesn't.
+float side_gain = 0.1;         // side tone volume, also af_gain affects side tone volume. agc_gain doesn't.
 float sig_rms;
 int transmitting;
 float cw_det_val = 1.3;        // mark space detect, adjust in volume options ( double tap, single tap )
 float agc_sig = 0.3;           // made global so can set it after tx and have rx process bring up the af gain
 int attn2;                     // attenuator using T/R switch
-int key_mode;                  // CW keyer source and practice on/off.
 int wpm = 12;                  // keyer speed, adjust with "Volume" routines 
 
+
+#define STRAIGHT    0          // CW keyer modes
+#define ULTIMATIC   1
+#define MODE_A      2
+#define MODE_B      3
+#define PRACTICE_T  4          // last options toggle practice and use of the touch keyer, and swap
+#define TOUCH_T     5          // put them in this menu as special cases to avoid more yes/no menu's
+#define KEY_SWAP    6
+int key_mode = ULTIMATIC;
+int touch_key = 0;
+int cw_practice = 1;
+int key_swap = 1;              // !!! or I wired something wrong
 
 #define stage(c) Serial.write(c)
 
@@ -1015,9 +1026,13 @@ int t;
       tm = millis();
       while( t-- ){
          if( step_timer ) --step_timer;       // 1.5 seconds to dtap freq step up to 500k 
+         
          int t2 = button_state(0);
          if( t2 > DONE ) button_process(t2);
-         if( mode == CW ) keyer();
+         
+         if( mode == CW && key_mode != STRAIGHT ) keyer();
+         else ptt();
+         
       }
       if( transmitting ) tx_status(0);
    }
@@ -1315,7 +1330,7 @@ char buf[20];
     if( transmitting ) return;       // avoid OLED writes
     if( mode > 4 ) return;           //!!! how to handle memory tuning
     strncpy(msg,&modes[3*mode],3);
-    if( mode == CW && key_mode < 2 ) msg[2] = 'p';   // practice mode
+    if( mode == CW && cw_practice ) msg[2] = 'p';   // practice mode
     msg[3] = 0;
     
     // strcpy(msg2,"STP ");
@@ -1860,29 +1875,34 @@ char cmd2;
 
 /********************* end Argo V CAT ******************************/
 
+#define DIT 1
+#define DAH 2
+
 int read_paddles(){
 int pdl;
 
-   // !!! add touch as input option
    pdl = digitalReadFast( DAHpin ) << 1;
    pdl += digitalReadFast( DITpin );
 
    pdl ^= 3;         // make logic positive
-   // swap
-   // pdl <<= 1;
-   // if( pdl & 4 ) pdl += 1;
-   // pdl &= 3;
+   if( key_swap ){
+      pdl <<= 1;
+      if( pdl & 4 ) pdl += 1;
+      pdl &= 3;
+   }
+
+   // !!! add touch as input option
 
    return pdl;
 }
 
-void side_tone_on(){        // call tx() if not in practice mode
+void side_tone_on(){
 
   SideTone.frequency(700);
   SideTone.amplitude(side_gain);
   Volume.gain(0,0.0);
   Volume.gain(3,af_gain);   // or make this a constant to remove volume setting from the sidetone adjustment
-  // if( key_mode > 1 ) tx();
+  // if( cw_practice == 0 ) tx();   !!! enable when ready
 }
 
 void side_tone_off(){
@@ -1892,12 +1912,29 @@ void side_tone_off(){
   Volume.gain(0,af_gain);
 }
 
+void ptt(){                // ssb PTT or straight key, this uses DIT input because DAH is the MIC input
+static uint32_t dbounce;
+static int txing;          // for cw practice mode to work, duplicate the transmitting variable
+int pdl;
+
+   pdl = read_paddles() & DIT;
+   dbounce >>= 1;
+   if( pdl ) dbounce |= 0x400;    // 8000 is 16ms delay, with 32 bits can double if needed. this will stretch key on time. 
+
+   if( mode == CW ){               // straight key mode
+      if( txing && dbounce == 0 ) txing = 0, side_tone_off();
+      else if( txing == 0 && dbounce ) txing = 1, side_tone_on();
+   }
+   else{                           // SSB
+      if( transmitting && dbounce == 0 ) rx();
+      else if( transmitting == 0 && dbounce ) ;     // tx(); !!! when ready to enable
+   }
+}
 
 // http://cq-cq.eu/DJ5IL_rt007.pdf      all about the history of keyers
 
-#define DIT 1
-#define DAH 2
-//#define WPM 14
+#define WEIGHT 200        // extra weight for keyed element
+
 void keyer( ){
 static int state;
 static int count;
@@ -1918,9 +1955,11 @@ int pdl;
         if( cel == 0 ) break;
         iam = (DIT+DAH) ^ cel;
         arm = ( iam ^ pdl ) & iam;         // memory only armed if alternate paddle is not pressed at this time, edge trigger
-        // arm = iam;                      // mode B - your descent into madness begins.  Level triggered memory.
-        // iam = cel;                      // ultimatic mode
-        count = 1200/wpm;
+                                                    // have set up for mode A
+        if( key_mode == MODE_B ) arm = iam;         // mode B - the descent into madness begins.  Level triggered memory.
+        if( key_mode == ULTIMATIC ) iam = cel;      // ultimatic mode
+        
+        count = (1200+WEIGHT)/wpm;
         if( cel == DAH ) count *= 3;
         state = 1;
         side_tone_on();
@@ -2272,9 +2311,9 @@ struct MENU attn_menu = {
 };
 
 struct MENU keyer_menu = {
-    4,
+    7,
     "Keyer Mode",
-    { "Key Prac", "Touch P", "Key", "Touch" }
+    { "Straight", "UltiMatc", "Mode A", "Mode B", "Practice", "TouchKey", "Swap" }
 };
 
 struct MENU main_menu = {
@@ -2344,7 +2383,10 @@ int ret_val;
             ret_val = state = 0;
          break;
          case 6:
-            key_mode = def_val;
+            if( def_val == PRACTICE_T ) cw_practice ^= 1;
+            else if( def_val == TOUCH_T ) touch_key ^= 1;
+            else if( def_val == KEY_SWAP ) key_swap ^= 1;
+            else key_mode = def_val;
             ret_val = state = 0;
          break;    
          //default:  state = 0; ret_val = 0; break;  // temp
