@@ -56,7 +56,10 @@
  *    Version 1.49  Many little changes with menu and cw keyer, speed, practice mode, sidetone, etc. 
  *    Version 1.50  CW keying had pops on one side of the paddle only, probably due to the 1uf I put in place of the 220nf.  Added a
  *                  manual jumper to isolate the nets when in CW mode and connect them in SSB mode. Moved the Si5351 code into
- *                  a separate file. 
+ *                  a separate file. Added a BandWidth object for CW but signals for all modes pass through it, so the Weaver lowpass
+ *                  filters are set as a roofing type filter and the new Bandwidth object is used for the final bandwidth control.
+ *                  Added a tone control that changes the Q of the Bandwidth object. 
+ *                  
  *             
  */
 
@@ -94,13 +97,20 @@
 //  test RIT actually works as described and tx remains fixed for CW and SSB modes.
 //  test Transmitter in microphone voice mode, and computer voice mode
 //  CW filters have two peaks, one as desired and one up around 1200 hz
+//     Best solution I think is to run the Weaver at about 2200 bandwidth and provide a separate CW filter before the volume
+//     control.  Can run to unused input on Volume control.  Cw det can run after this filter.  Agc may be affected with out
+//     of cw bandwidth signals.
 //  CW detect does not work well / tone object returns zero often.
 //  Is there any way to show modulation amount on the OLED? Would need to sneak in I2C writes during transmit.
-//  Investigate the improved branch and the sending of one less register during transmit.
+//  Investigate the sending of one less register during transmit in the rx improved branch.
 //  Add a Tone control.
 //  Consider FFT display, maybe plot only +- 11k as the Tayloe detector rolls off sharply
 //  C4 C7 - does adding them cause processor noise in the front end.
 //  Measure audio image response, and alias images at +-44k away.
+//  Add memory tuning or remove it from modes.  Do we want/need memory tuning in this simple radio?
+//  Would it be better to run the radio with gains wide open and have the agc after the detector? Better dynamic range?  All stages
+//     seem to overload at the same time. Best would be an analog RF attenuator with FET bypass in the rx line like had in the SSB6 and
+//     in the Rebel.  
  
   
  
@@ -163,12 +173,13 @@
  #include <OLED1306_Basic.h>
 #endif
 
-#include <i2c_t3.h>      // non-blocking wire library
-#include "MagPhase.h"
+#include <i2c_t3.h>            // non-blocking wire library
+#include "MagPhase.h"          // transmitting audio object
 // #include "filters.h"
-// #include "SSB_AM.h"
-#include "AM_decode.h"
-#include "my_morse.h"
+// #include "SSB_AM.h"           // down sample, up sample decoder, worked but had weak output and did not drive AGC correctly 
+#include "AM_decode.h"         // the simplest complex IQ decoder that I tried
+#include "my_morse.h"          // my morse table, designed for sending but used also for receive
+
 
 
 extern unsigned char SmallFont[];
@@ -216,12 +227,13 @@ IntervalTimer EER_timer;
 int encoder_user;
 
 // volume users - general use of volume code
-#define MAX_VUSERS 5
+#define MAX_VUSERS 6
 #define VOLUME_U   0
 #define AGC_GAIN_U 1
 #define CW_DET_U   2
 #define SIDE_VOL_U 3
 #define WPM_U      4
+#define TONE_U      5
 int volume_user;
 
 #define MIC 0
@@ -283,8 +295,9 @@ float sig_rms;
 int transmitting;
 float cw_det_val = 1.3;        // mark space detect, adjust in volume options ( double tap, single tap )
 float agc_sig = 0.3;           // made global so can set it after tx and have rx process bring up the af gain
-int attn2;                     // attenuator using T/R switch
-int wpm = 12;                  // keyer speed, adjust with "Volume" routines 
+int attn2;                     // attenuator using T/R switch, very large decrease in volume
+int wpm = 14;                  // keyer speed, adjust with "Volume" routines
+float tone_;                   // tone control, adjust Q of the bandwidth object
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -297,7 +310,7 @@ int wpm = 12;                  // keyer speed, adjust with "Volume" routines
 int key_mode = ULTIMATIC;
 int touch_key = 0;
 int cw_practice = 1;
-int key_swap = 1;              // !!! or I wired something wrong
+int key_swap = 1;              // jack wired with tip = DAH, needs swap from most of my other radio's
 
 #define stage(c) Serial.write(c)
 
@@ -310,6 +323,59 @@ int key_swap = 1;              // !!! or I wired something wrong
 //#include <SerialFlash.h>
 
 
+// New Bandwidth object for CW, and multi purpose AM,SSB.
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=234.99997329711914,284.9999809265137
+AudioInputUSB            usb2;           //xy=334.04761123657227,454.6190490722656
+AudioAnalyzePeak         peak1;          //xy=344.3332977294922,144.3333396911621
+AudioAmplifier           agc2;           //xy=389,311.6667175292969
+AudioAmplifier           agc1;           //xy=392.8333740234375,261.33331298828125
+AudioFilterBiquad        QLow;           //xy=413.83331298828125,360.25
+AudioFilterBiquad        ILow;           //xy=429.4999694824219,208.41665649414062
+AudioMixer4              TxSelect;       //xy=569.3333740234375,445.61907958984375
+AudioSynthWaveformSine   sinBFO;         //xy=573.083251953125,307.41668701171875
+AudioSynthWaveformSine   cosBFO;         //xy=575.9166259765625,270.75
+AudioEffectMultiply      Q_mixer;        //xy=607.9999389648438,363.66668701171875
+AudioEffectMultiply      I_mixer;        //xy=610.8333129882812,214.58334350585938
+AudioAMdecode2           AMdet;         //xy=620.714183807373,145.71428680419922
+AudioSynthWaveformSine   SideTone;       //xy=764.0000343322754,347.95239448547363
+AudioMagPhase1           MagPhase;         //xy=779.2856788635254,445.4761657714844
+AudioMixer4              SSB;            //xy=780.7618827819824,278.4762382507324
+AudioAnalyzeRMS          rms1;           //xy=826.6665496826172,161.71426010131836
+AudioFilterBiquad        BandWidth;          //xy=940.0000534057617,199.5237808227539
+AudioMixer4              Volume;         //xy=974.7619171142578,278.7619285583496
+AudioAnalyzeToneDetect   CWdet;          //xy=1096.9524993896484,184.8570957183838
+AudioOutputAnalog        dac1;           //xy=1097.190330505371,250.61907577514648
+AudioOutputUSB           usb1;           //xy=1118.6191940307617,313.61904525756836
+AudioConnection          patchCord1(adcs1, 0, peak1, 0);
+AudioConnection          patchCord2(adcs1, 0, agc1, 0);
+AudioConnection          patchCord3(adcs1, 1, agc2, 0);
+AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
+AudioConnection          patchCord5(agc2, QLow);
+AudioConnection          patchCord6(agc1, ILow);
+AudioConnection          patchCord7(QLow, 0, Q_mixer, 0);
+AudioConnection          patchCord8(QLow, 0, TxSelect, 0);
+AudioConnection          patchCord9(QLow, 0, AMdet, 1);
+AudioConnection          patchCord10(ILow, 0, I_mixer, 0);
+AudioConnection          patchCord11(ILow, 0, AMdet, 0);
+AudioConnection          patchCord12(TxSelect, 0, MagPhase, 0);
+AudioConnection          patchCord13(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord14(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord15(Q_mixer, 0, SSB, 2);
+AudioConnection          patchCord16(I_mixer, 0, SSB, 1);
+AudioConnection          patchCord17(AMdet, 0, SSB, 0);
+AudioConnection          patchCord18(SideTone, 0, Volume, 3);
+AudioConnection          patchCord19(SideTone, 0, TxSelect, 2);
+AudioConnection          patchCord20(BandWidth, rms1);
+AudioConnection          patchCord21(SSB, BandWidth);
+AudioConnection          patchCord22(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord23(BandWidth, CWdet);
+AudioConnection          patchCord24(Volume, dac1);
+AudioConnection          patchCord25(Volume, 0, usb1, 0);
+AudioConnection          patchCord26(Volume, 0, usb1, 1);
+// GUItool: end automatically generated code
+
+/*
 // Weaver RX with AM mode version 2
 
 // GUItool: begin automatically generated code
@@ -363,7 +429,7 @@ AudioConnection          patchCord25(Volume, 0, usb1, 1);
 AudioConnection          patchCord26(SSB, CWdet);
 // GUItool: end automatically generated code
 
-
+*/
 /*
 // Weaver SSB RX with new AM detector signal flow, 24 cpu vs my detector 22 cpu
 
@@ -454,10 +520,10 @@ void i2stop( ){
 }
 
 
-#include "si5351_usdx.cpp"
+// this include seems to need to be here.  If at top of file with other includes, get a compiler bug error.  
 
-
-//***********************************************************
+#include "si5351_usdx.cpp"     // the si5351 code from the uSDX project, modified slightly for RIT and dividers used.
+SI5351 si5351;                 // maybe it should be done this way.
 
 
 // the transmit process uses I2C in an interrupt context.  Must prevent other users from writing on I2C.  
@@ -493,7 +559,7 @@ int mag;
    
       if( dp < 0 ) dp = dp + _UA;
       // removed scaling dp, instead have _UA same as sample rate
-      if( dp < 3100  ){     // skip sending out of tx bandwidth freq range
+      if( dp < 3100  ){                              // skip sending out of tx bandwidth freq range
          if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
          else dp -= bfo;
          if( mode == DIGI ){                         // filter the phase results, good idea or not?
@@ -506,7 +572,7 @@ int mag;
           si5351.freq_calc_fast(dp);
           if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
               si5351.SendPLLBRegisterBulk();
-              else ++overs;                     //  Out of time, count missed I2C transactions
+              else ++overs;                     //  Out of time, count skipped I2C transactions
       }     
            
    mag = MagPhase.mvalue(eer_count);
@@ -543,6 +609,20 @@ int mag;
       
       if( u ) EER_timer.update( eer_time);
    }
+
+     //  if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
+  //     static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
+  //     ++mod;
+  //     if( /* mod > 0 && mod < 50 || */ trigger_){
+  //        Serial.print( dp );  Serial.write(' ');     //  testing, get a small slice of data
+  //        Serial.print( rav_df );  Serial.write(' ');
+  //        //Serial.print( php ); Serial.write(' ');
+  //        Serial.print( magp );
+  //        Serial.println(); 
+  //     }
+  //     if( mod > 20000 ) mod = 0;
+  //  }
+
 }
 
 void setup() {
@@ -608,8 +688,8 @@ void setup() {
   //TxSelect.gain(3,0.0);          // not testing
 
   // AM high low pass filter,  fixed bandwidth at 4k, highpass to remove DC
-  AMLow.setHighpass(0,300,0.70710678);
-  AMLow.setLowpass(1,4000,0.70710678);
+//  AMLow.setHighpass(0,300,0.70710678);
+//  AMLow.setLowpass(1,4000,0.70710678);
  // AMLow.setLowpass(2,4000,0.70710678);
  // AMLow.setLowpass(3,4000,1.9318517);
 
@@ -631,18 +711,34 @@ void setup() {
   //  1.9318517
 
 void set_bandwidth( ){
-int bw;                              // or bandwidth changed in menu's.
+int bw;
+int hp;                              // where the hipass cutoff should be
+int wv;                              // where we will put the weaver lowpass
 
    bw = 3300;                        // remove warning uninitialized variable
    switch( filter ){
-       case 0: bw = 300; break;     // data duplicated from menu strings.  Could be improved so that
-       case 1: bw = 700; break;     // one doesn't need to maintain data in two places if changes are made.
+       case 0: bw = 300; break;      // data duplicated from menu strings.  Could be improved so that
+       case 1: bw = 900; break;     // one doesn't need to maintain data in two places if changes are made.
        case 2: bw = 2700; break;
        case 3: bw = 3000; break;
        case 4: bw = 3300; break;
        case 5: bw = 3600; break;
    }
-   set_Weaver_bandwidth(bw); 
+   
+   if( mode == CW ){
+       wv = 2500;
+       hp = ( bw > 1000 ) ? 200 : 700 - bw/2;
+       bw = ( bw > 1000 ) ? bw : 700 + bw/2 ;
+   }
+   else if( mode == AM ) wv = 6000, hp = 100;
+   else hp = 200, wv = 4000;
+
+   BandWidth.setHighpass(0,hp,0.70710678);
+   BandWidth.setLowpass(1,bw,0.51763809 + tone_);
+   BandWidth.setLowpass(2,bw,0.70710678 + tone_);
+   BandWidth.setLowpass(3,bw,1.9318517);
+   
+   set_Weaver_bandwidth(wv); 
 }
 
 void set_attn2(){
@@ -658,6 +754,12 @@ void set_attn2(){
 
 void set_af_gain(float g){
 
+     Volume.gain(0,g);
+     Volume.gain(1,0.0);
+     Volume.gain(2,0.0);     // unused
+     Volume.gain(3,0.0);     // sidetone
+
+/***
   if( mode == AM ){
      Volume.gain(0,0.0);
      Volume.gain(1,g);
@@ -668,6 +770,7 @@ void set_af_gain(float g){
      Volume.gain(2,0.0);     // unused
      Volume.gain(3,0.0);     // sidetone
   }
+  ****/
 }
 
 void set_agc_gain(float g ){
@@ -683,6 +786,30 @@ void set_Weaver_bandwidth(int bandwidth){
   
   bfo = bandwidth/2;                       // weaver audio folding at 1/2 bandwidth
 
+  ILow.setLowpass(0,bfo,0.50979558);       // filters are set to 1/2 the desired audio bandwidth
+  ILow.setLowpass(1,bfo,0.60134489);       // with Butterworth Q's for 4 cascade
+  ILow.setLowpass(2,bfo,0.89997622);
+  ILow.setLowpass(3,bfo,2.5629154);
+
+  QLow.setLowpass(0,bfo,0.50979558);
+  QLow.setLowpass(1,bfo,0.60134489);
+  QLow.setLowpass(2,bfo,0.89997622);
+  QLow.setLowpass(3,bfo,2.5629154);
+
+  AudioNoInterrupts();                     // need so cos and sin start with correct phase
+
+    // complex BFO
+  cosBFO.amplitude(0.9);                   // amplitude 1.0 causes distortion ?
+  cosBFO.frequency(bfo);
+  cosBFO.phase(90);                        // cosine 
+  sinBFO.amplitude(0.9);
+  sinBFO.frequency(bfo);
+  sinBFO.phase(0);                         // sine
+
+  AudioInterrupts();
+  qsy(freq);             // refresh Si5351 to new vfo frequency after weaver bandwidth changes
+
+/****************
   if( mode == AM ){                                  // set to pass complete passband 4k
      ILow.setLowpass(0,4000,0.50979558);
      ILow.setLowpass(1,4000,0.60134489);       // Butterworth Q's for 4 cascade
@@ -707,34 +834,18 @@ void set_Weaver_bandwidth(int bandwidth){
      QLow.setLowpass(2,bfo,0.89997622);
      QLow.setLowpass(3,bfo,2.5629154);
   }
-  else{                                               // CW set a bandpass with high and low pass 
-     int bw = bandwidth;
-     ILow.setLowpass(0,(700+bw/2)/2,0.54119610);
-     ILow.setLowpass(1,(700+bw/2)/2,1.3065630);       // Butterworth Q's for 2 cascade
-     ILow.setHighpass(2,(700-bw/2)/2,0.54119610);
-     ILow.setHighpass(3,(700-bw/2)/2,1.3065630);
+  else{                                               // CW try set a bandpass with high and low pass 
+     ILow.setHighpass(0,300,0.70710678);              // mind where null lands. 800 and 1000 null at 400 and 500
+     ILow.setLowpass(1,bfo,0.51763809);               // want to listen at 700
+     ILow.setLowpass(2,bfo,0.70710678);
+     ILow.setLowpass(3,bfo,1.9318517);
 
-     QLow.setLowpass(0,(700+bw/2)/2,0.54119610);
-     QLow.setLowpass(1,(700+bw/2)/2,1.3065630);       // Butterworth Q's for 2 cascade
-     QLow.setHighpass(2,(700-bw/2)/2,0.54119610);
-     QLow.setHighpass(3,(700-bw/2)/2,1.3065630);
-
-     bfo = 1000;                                  // !!! ? what should this be. Don't want null at 700 midband.
+     QLow.setHighpass(0,300,0.70710678);
+     QLow.setLowpass(1,bfo,0.51763809);
+     QLow.setLowpass(2,bfo,0.70710678);
+     QLow.setLowpass(3,bfo,1.9318517);
   }
-
-  AudioNoInterrupts();                     // need so cos and sin start with correct phase
-
-    // complex BFO
-  cosBFO.amplitude(0.9);                   // amplitude 1.0 causes distortion ?
-  cosBFO.frequency(bfo);
-  cosBFO.phase(90);                        // cosine 
-  sinBFO.amplitude(0.9);
-  sinBFO.frequency(bfo);
-  sinBFO.phase(0);                         // sine
-
-  AudioInterrupts();
-  qsy(freq);             // refresh Si5351 to new vfo frequency after weaver bandwidth changes
-                      
+************/
 }
 
 
@@ -1010,9 +1121,9 @@ float amp;
 void button_process( int t ){
 
     if( transmitting ){
-         rx();                   // abort tx on any ? do we want this or just return
-         return;
-    }
+         rx();                   // abort tx on any switch press. do we want this or just return OR
+         return;                 // maybe allow tap and double tap, not allow menu long press. !!!
+    }                            // problem will be the OLED, can't write during transmit.
     
     switch( t ){
       case TAP:
@@ -1060,14 +1171,15 @@ void button_process( int t ){
             qsy( freq );            // reset the hidden vfo B to be equal to A.
             freq_display();
          }
-         else encoder_user = MENUS, top_menu(0);  break;
+         else encoder_user = MENUS, top_menu(0);
+      break;
     }
     button_state(DONE);
 }
 
 // once just volume, now general use knob function
 void volume_adjust( int val ){
-const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd "}; 
+const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd ", "Tone    "}; 
 float pval; 
 
    if( val == 0  ){     // first entry, clear status line
@@ -1113,16 +1225,21 @@ float pval;
         pval = cw_det_val;
       break;
       case SIDE_VOL_U:
-        side_gain += (float)val * 0.05;
-        side_gain = constrain(side_gain,0.0,1.0);
+        side_gain += (float)val * 0.02;
+        side_gain = constrain(side_gain,0.0,0.4);     // this gets loud easy
         pval = side_gain;
-        // gen a sample of audio here
       break;
       case WPM_U:
         wpm += val;
-        wpm = constrain(wpm,12,20);     // faster wanted - change it here
+        wpm = constrain(wpm,12,25);     // faster wanted? - change it here
         pval = wpm;
-      break; 
+      break;
+      case TONE_U:
+        tone_ += (float)val * 0.01;
+        tone_ = constrain(tone_,-0.3,0.3);
+        set_bandwidth();
+        pval = tone_;
+      break;
    }
    
    #ifdef USE_LCD
@@ -1254,19 +1371,19 @@ void mode_change( int to_mode ){
      SSB.gain(0,0.0);
      SSB.gain(3,0.0);
   }
-//  else if( mode == AM ){
-//     SSB.gain(1,0.0);             // add half of rectified signals to avoid overflow
-//     SSB.gain(2,0.0);             // complex async detector
-//     SSB.gain(0,0.49);
-//     SSB.gain(3,0.49);    
-//  }
+  else if( mode == AM ){
+     SSB.gain(1,0.0);  
+     SSB.gain(2,0.0);
+     SSB.gain(0,1.0);             // AM audio path select
+     SSB.gain(3,0.0);    
+  }
   else{
      SSB.gain(1,1.0);             // sub for USB
      SSB.gain(2,-1.0);
      SSB.gain(0,0.0);
      SSB.gain(3,0.0);
   }
-  set_af_gain(af_gain);                              // listen to the correct audio path
+  //set_af_gain(af_gain);                              // listen to the correct audio path
   set_bandwidth();                                   // bandwidth is mode dependent
   if( mode == CW ) pinMode(DAHpin, INPUT_PULLUP);    // accomdate the hardware jumper difference when in CW mode. 
   else pinMode(DAHpin, INPUT );                      // Let 10k pullup work alone. 
@@ -1315,12 +1432,14 @@ void menu_cleanup(){
 
 
 //  USA: can we transmit here and what mode
+//  lower case for CW portions, upper case for phone segments
+//  X - out of band, E - Extra, A - Advanced class, G - General
 char band_priv( uint32_t f ){
 char r = 'X';
 
-   if( band != 1 ) f = f / 1000;
-   else f = f / 100;
-   switch( band ){               // is there an easy way to do this
+   if( band != 1 ) f = f / 1000;             // test 1k steps
+   else f = f / 100;                         // 60 meters, test 500hz steps
+   switch( band ){                           // is there an easy way to do this.  This seems like the hard way.
        case 0:
           if( f >= 3500 && f <= 4000 ){
              if( f < 3525 ) r = 'e';
@@ -1425,7 +1544,7 @@ int ch;                            // flag change needed
       g = agc_sig - AGC_FLOOR;
       g *= AGC_SLOPE;
       g = agc_gain - g;
-      if( g < 0 ) g = 0.1;
+      if( g <= 0 ) g = 0.1;
       set_agc_gain(g);
     }                                               
 
