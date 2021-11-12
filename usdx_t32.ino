@@ -58,7 +58,7 @@
  *                  manual jumper to isolate the nets when in CW mode and connect them in SSB mode. Moved the Si5351 code into
  *                  a separate file. Added a BandWidth object for CW but signals for all modes pass through it, so the Weaver lowpass
  *                  filters are set as a roofing type filter and the new Bandwidth object is used for the final bandwidth control.
- *                  Added a tone control that changes the Q of the Bandwidth object. 
+ *                  Added a tone control that changes the Q of the Bandwidth object to vary the tone. 
  *                  
  *             
  */
@@ -96,22 +96,18 @@
 //  Issues / to do 
 //  test RIT actually works as described and tx remains fixed for CW and SSB modes.
 //  test Transmitter in microphone voice mode, and computer voice mode
-//  CW filters have two peaks, one as desired and one up around 1200 hz
-//     Best solution I think is to run the Weaver at about 2200 bandwidth and provide a separate CW filter before the volume
-//     control.  Can run to unused input on Volume control.  Cw det can run after this filter.  Agc may be affected with out
-//     of cw bandwidth signals.
 //  CW detect does not work well / tone object returns zero often.
-//  Is there any way to show modulation amount on the OLED? Would need to sneak in I2C writes during transmit.
 //  Investigate the sending of one less register during transmit in the rx improved branch.
-//  Add a Tone control.
 //  Consider FFT display, maybe plot only +- 11k as the Tayloe detector rolls off sharply
 //  C4 C7 - does adding them cause processor noise in the front end.
 //  Measure audio image response, and alias images at +-44k away.
 //  Add memory tuning or remove it from modes.  Do we want/need memory tuning in this simple radio?
 //  Would it be better to run the radio with gains wide open and have the agc after the detector? Better dynamic range?  All stages
 //     seem to overload at the same time. Best would be an analog RF attenuator with FET bypass in the rx line like had in the SSB6 and
-//     in the Rebel.  
- 
+//     in the Rebel.
+//  Cut Vusb etch on the Teensy.
+//  'overs' during transmit.  Should we be concerned that sometimes the I2C is not ready for the next set of registers?
+//  key modes conflict - CAT and ptt, should CAT audio also imply key via CAT and not PTT.  Make it this way for now.  
   
  
  // QCX pin definitions mega328 to Teensy 3.2
@@ -281,6 +277,7 @@ int mode = DIGI;
 int filter = 4;
 int bfo;
 int magp;                      // tx drive display on the LCD only
+int magpmax;                   // max tx drive display on OLED after return to rx mode.  Can't write to OLED during transmit.
 int php;                       // !!! testing phase print
 int32_t rav_df;                // digi mode tx filters
 int32_t rav_mag;
@@ -736,7 +733,7 @@ int wv;                              // where we will put the weaver lowpass
    BandWidth.setHighpass(0,hp,0.70710678);
    BandWidth.setLowpass(1,bw,0.51763809 + tone_);
    BandWidth.setLowpass(2,bw,0.70710678 + tone_);
-   BandWidth.setLowpass(3,bw,1.9318517);
+   BandWidth.setLowpass(3,bw,1.9318517 + tone_/2);
    
    set_Weaver_bandwidth(wv); 
 }
@@ -919,6 +916,11 @@ void rx(){
   //delay(1);                                // !!! maybe needed for i2c delay to suppress any rx thumps
   set_af_gain( af_gain );                  // unmute rx
   agc_sig = 0.2;                           // start with 20 over volume setting in agc system
+  #ifdef USE_OLED                          // print max mic volume during transmit
+    OLD.print(( char * )"Mod ", 128 - 8*6, ROW2);
+    OLD.printNumI( magpmax, RIGHT, ROW2, 4, ' ' );
+    magpmax = 0;
+  #endif
 }
 
 
@@ -1002,7 +1004,7 @@ int t;
          if( t2 > DONE ) button_process(t2);
          
          if( mode == CW && key_mode != STRAIGHT ) keyer();
-         else ptt();
+         else if( tx_source != USBc ) ptt();   // USB always key's via CAT control.
          
       }
       if( transmitting ) tx_status(0);
@@ -1046,6 +1048,8 @@ int i;
    for( i = 0; i < num; ++i ) LCD.putch('#');
    for( ; i < 14; ++i ) LCD.putch(' ');
 #endif
+
+   if( magp > magpmax ) magpmax = magp;     // print max mag on OLED after transmit.
    
 }
 
@@ -1235,8 +1239,8 @@ float pval;
         pval = wpm;
       break;
       case TONE_U:
-        tone_ += (float)val * 0.01;
-        tone_ = constrain(tone_,-0.3,0.3);
+        tone_ += (float)val * 0.02;
+        tone_ = constrain(tone_,-0.4,0.4);
         set_bandwidth();
         pval = tone_;
       break;
