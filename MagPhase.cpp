@@ -149,7 +149,7 @@ int i;
 }
 */ 
 
-// a 31 tap classic hilbert every other constant is zero
+// a 31 tap classic hilbert every other constant is zero, kaiser window
 static void process_hilbert( int16_t val ){
 static int32_t wi[31];                                // delay terms
 static int32_t wq[31];
@@ -211,7 +211,9 @@ void AudioMagPhase1::update(void){
         dat1 += 1;                                              
     }
     if( count >= AUDIO_BLOCK_SAMPLES / 2 ) avail = 1;         // have buffered > 6ms of data, avail latches on
+    noInterrupts();
     report_count = count;                                     // only report the block ending position of the count
+    interrupts();
     release( blk1 );
 }
 

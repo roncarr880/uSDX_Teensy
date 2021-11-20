@@ -58,12 +58,14 @@
  *                  manual jumper to isolate the nets when in CW mode and connect them in SSB mode. Moved the Si5351 code into
  *                  a separate file. Added a BandWidth object for CW but signals for all modes pass through it, so the Weaver lowpass
  *                  filters are set as a roofing type filter and the new Bandwidth object is used for the final bandwidth control.
- *                  Added a tone control that changes the Q of the Bandwidth object to vary the tone. 
+ *                  Added a tone control that changes the Q of the Bandwidth object to vary the tone.
+ *    Version 1.51  Adding a gain of 10 in front of the CW tone detect object greatly improved the CW decoder.  Added a test to just            
+ *                  load 4 registers in SendPLLBRegisterBulk when register 3 was the same as last time. 
  *                  
  *             
  */
 
-#define VERSION 1.50
+#define VERSION 1.51
 
 // Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
 // Mic should have Mic on Tip, PTT on Ring for this radio.
@@ -95,20 +97,15 @@
 
 //  Issues / to do 
 //  test RIT actually works as described and tx remains fixed for CW and SSB modes.
-//  test Transmitter in microphone voice mode, and computer voice mode
-//  CW detect does not work well / tone object returns zero often.
-//  Investigate the sending of one less register during transmit in the rx improved branch.
+//  test Transmitter quality in microphone voice mode, and computer voice mode
 //  Consider FFT display, maybe plot only +- 11k as the Tayloe detector rolls off sharply
 //  C4 C7 - does adding them cause processor noise in the front end.
 //  Measure audio image response, and alias images at +-44k away.
-//  Add memory tuning or remove it from modes.  Do we want/need memory tuning in this simple radio?
-//  Would it be better to run the radio with gains wide open and have the agc after the detector? Better dynamic range?  All stages
-//     seem to overload at the same time. Best would be an analog RF attenuator with FET bypass in the rx line like had in the SSB6 and
-//     in the Rebel.
+//  Add peak objects again to see how the gain distribution is through the stages.
+//  BFO level should be what?  Once it seemed using 1.0 level signals caused distortion. ( sign change during interpolation ? )
 //  Cut Vusb etch on the Teensy.
-//  'overs' during transmit.  Should we be concerned that sometimes the I2C is not ready for the next set of registers?
-//  key modes conflict - CAT and ptt, should CAT audio also imply key via CAT and not PTT.  Make it this way for now.  
-  
+//  Add plug in low pass filters for bands other than 17 meters.
+//  Cap touch keyer/ptt inputs wired.  
  
  // QCX pin definitions mega328 to Teensy 3.2
 /* 
@@ -223,13 +220,14 @@ IntervalTimer EER_timer;
 int encoder_user;
 
 // volume users - general use of volume code
-#define MAX_VUSERS 6
+#define MAX_VUSERS 7
 #define VOLUME_U   0
 #define AGC_GAIN_U 1
 #define CW_DET_U   2
 #define SIDE_VOL_U 3
 #define WPM_U      4
 #define TONE_U      5
+#define TX_DRIVE_U  6
 int volume_user;
 
 #define MIC 0
@@ -295,6 +293,8 @@ float agc_sig = 0.3;           // made global so can set it after tx and have rx
 int attn2;                     // attenuator using T/R switch, very large decrease in volume
 int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
+float tx_drive = 1.0;          // but probably best to adjust USBc drive with the computer
+                               // and use this for the microphone and sidetone testing tx level
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -319,7 +319,62 @@ int key_swap = 1;              // jack wired with tip = DAH, needs swap from mos
 //#include <SD.h>
 //#include <SerialFlash.h>
 
+// trying more signal into the CW detector with an AMP object
 
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=234.99997329711914,284.9999809265137
+AudioInputUSB            usb2;           //xy=334.04761123657227,454.6190490722656
+AudioAnalyzePeak         peak1;          //xy=344.3332977294922,144.3333396911621
+AudioAmplifier           agc2;           //xy=389,311.6667175292969
+AudioAmplifier           agc1;           //xy=392.8333740234375,261.33331298828125
+AudioFilterBiquad        QLow;           //xy=413.83331298828125,360.25
+AudioFilterBiquad        ILow;           //xy=429.4999694824219,208.41665649414062
+AudioMixer4              TxSelect;       //xy=569.3333740234375,445.61907958984375
+AudioSynthWaveformSine   sinBFO;         //xy=573.083251953125,307.41668701171875
+AudioSynthWaveformSine   cosBFO;         //xy=575.9166259765625,270.75
+AudioEffectMultiply      Q_mixer;        //xy=607.9999389648438,363.66668701171875
+AudioEffectMultiply      I_mixer;        //xy=610.8333129882812,214.58334350585938
+AudioAMdecode2           AMdet;         //xy=620.714183807373,145.71428680419922
+AudioSynthWaveformSine   SideTone;       //xy=764.0000343322754,347.95239448547363
+AudioMagPhase1           MagPhase;         //xy=779.2856788635254,445.4761657714844
+AudioMixer4              SSB;            //xy=780.7618827819824,278.4762382507324
+AudioFilterBiquad        BandWidth;          //xy=897.5000610351562,204.52377319335938
+AudioAnalyzeRMS          rms1;           //xy=946.6665649414062,149.21426391601562
+AudioMixer4              Volume;         //xy=974.7619171142578,278.7619285583496
+AudioAmplifier           amp1;           //xy=1060,202
+AudioOutputAnalog        dac1;           //xy=1097.190330505371,250.61907577514648
+AudioAnalyzeToneDetect   CWdet;          //xy=1104.7025146484375,139.3571014404297
+AudioOutputUSB           usb1;           //xy=1118.6191940307617,313.61904525756836
+AudioConnection          patchCord1(adcs1, 0, peak1, 0);
+AudioConnection          patchCord2(adcs1, 0, agc1, 0);
+AudioConnection          patchCord3(adcs1, 1, agc2, 0);
+AudioConnection          patchCord4(usb2, 0, TxSelect, 1);
+AudioConnection          patchCord5(agc2, QLow);
+AudioConnection          patchCord6(agc1, ILow);
+AudioConnection          patchCord7(QLow, 0, Q_mixer, 0);
+AudioConnection          patchCord8(QLow, 0, TxSelect, 0);
+AudioConnection          patchCord9(QLow, 0, AMdet, 1);
+AudioConnection          patchCord10(ILow, 0, I_mixer, 0);
+AudioConnection          patchCord11(ILow, 0, AMdet, 0);
+AudioConnection          patchCord12(TxSelect, 0, MagPhase, 0);
+AudioConnection          patchCord13(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord14(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord15(Q_mixer, 0, SSB, 2);
+AudioConnection          patchCord16(I_mixer, 0, SSB, 1);
+AudioConnection          patchCord17(AMdet, 0, SSB, 0);
+AudioConnection          patchCord18(SideTone, 0, Volume, 3);
+AudioConnection          patchCord19(SideTone, 0, TxSelect, 2);
+AudioConnection          patchCord20(SSB, BandWidth);
+AudioConnection          patchCord21(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord22(BandWidth, rms1);
+AudioConnection          patchCord23(BandWidth, amp1);
+AudioConnection          patchCord24(Volume, dac1);
+AudioConnection          patchCord25(Volume, 0, usb1, 0);
+AudioConnection          patchCord26(Volume, 0, usb1, 1);
+AudioConnection          patchCord27(amp1, CWdet);
+// GUItool: end automatically generated code
+
+/*
 // New Bandwidth object for CW, and multi purpose AM,SSB.
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=234.99997329711914,284.9999809265137
@@ -371,7 +426,7 @@ AudioConnection          patchCord24(Volume, dac1);
 AudioConnection          patchCord25(Volume, 0, usb1, 0);
 AudioConnection          patchCord26(Volume, 0, usb1, 1);
 // GUItool: end automatically generated code
-
+*/
 /*
 // Weaver RX with AM mode version 2
 
@@ -532,7 +587,8 @@ SI5351 si5351;                 // maybe it should be done this way.
 int eer_count;
 int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
-int overs;
+int overs;               // I2C not ready for the next set of register data
+int saves;               // short write bulk
 // float eer_time = 90.680;  //90.668;  // us for each sample deci rate 4
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 // float eer_time = 113.335;   // 1/5 rate
@@ -579,8 +635,11 @@ int mag;
        mag = rav_mag;
    }
    // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
-   magp = mag = mag >> 5;
-   if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
+   mag >>= 5;
+   mag = constrain(mag,0,1024);
+   magp = mag;
+   //if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
+   analogWrite( KEYOUT, mag );
 
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
@@ -607,18 +666,18 @@ int mag;
       if( u ) EER_timer.update( eer_time);
    }
 
-     //  if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
-  //     static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
-  //     ++mod;
-  //     if( /* mod > 0 && mod < 50 || */ trigger_){
+       if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
+       static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
+       ++mod;
+       if(  mod > 0 && mod < 50 /*||  trigger_ */){
   //        Serial.print( dp );  Serial.write(' ');     //  testing, get a small slice of data
   //        Serial.print( rav_df );  Serial.write(' ');
   //        //Serial.print( php ); Serial.write(' ');
-  //        Serial.print( magp );
-  //        Serial.println(); 
-  //     }
-  //     if( mod > 20000 ) mod = 0;
-  //  }
+          Serial.print( magp );
+          Serial.println(); 
+       }
+       if( mod > 20000 ) mod = 0;
+    }
 
 }
 
@@ -696,6 +755,7 @@ void setup() {
   filter = 3;
   set_bandwidth();
   CWdet.frequency(700,7);       // 600,6  1000,10 etc... aim for 10ms sample times.  Higher tones will be more accurate.(more samples)
+  amp1.gain(10.0);              // more signal into the CW detector
 
   AudioInterrupts();
 
@@ -772,6 +832,7 @@ void set_af_gain(float g){
 
 void set_agc_gain(float g ){
 
+  if( transmitting) return;   // disable or leave agc active during transmit ? does it work for MIC compression ? 
   AudioNoInterrupts();
     agc1.gain(g);
     agc2.gain(g);
@@ -875,8 +936,8 @@ void tx(){
        QLow.setLowpass( 1,2800,0.51763809);
        QLow.setLowpass( 2,2800,0.70710678);
        QLow.setLowpass( 3,2800,1.9318517);
-       agc2.gain(2.0);                                 // write set_agc_gain for tx drive if using mic input
-                                                       // !!! should tx gain be adjusted with agc2 or with TX_Select
+       agc2.gain(1.0);
+
        // configured TX mux probably somewhere else in menu system, for microphone or usb source         
     }
     analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
@@ -901,7 +962,7 @@ void rx(){
   digitalWriteFast( KEYOUT, LOW );         // after timer end or it will be turned on again 
   interrupts();
   transmitting = 0;
-  overs = 0;
+  saves = overs = 0;
   digitalWriteFast( TXAUDIO_EN, LOW );    // turn FET audio switch off if its on
   si5351.SendRegister(3, 0b11111111);      // disable all clocks
   #ifdef USE_LCD
@@ -990,7 +1051,6 @@ int t;
         sig_rms = rms1.read();
         agc_process( sig_rms);
         report_peaks();
-        // if( mode == CW ) code_read(sig_rms);          // code read using amplitude level, not used now !!! remove this line
    }
 
    t = millis() - tm;                         // 1ms routines, loop for any missing counts
@@ -1004,7 +1064,8 @@ int t;
          if( t2 > DONE ) button_process(t2);
          
          if( mode == CW && key_mode != STRAIGHT ) keyer();
-         else if( tx_source != USBc ) ptt();   // USB always key's via CAT control.
+         // else if( tx_source != USBc ) ptt();   // USB always key's via CAT control.
+         else ptt();                              // usb audio can use ptt ( dit ) to transmit.
          
       }
       if( transmitting ) tx_status(0);
@@ -1047,6 +1108,7 @@ int i;
    LCD.gotoRowCol( 5, 0 );
    for( i = 0; i < num; ++i ) LCD.putch('#');
    for( ; i < 14; ++i ) LCD.putch(' ');
+   LCD.printNumI(saves,RIGHT,ROW3);
 #endif
 
    if( magp > magpmax ) magpmax = magp;     // print max mag on OLED after transmit.
@@ -1095,25 +1157,25 @@ float amp;
   // Serial.print(temp_count); Serial.write(' ');
   // Serial.print( eer_time,5 ); Serial.write(' ');
   // Serial.println( overs );
-   if( tx_source != SIDETONE ){
-      tx_source = SIDETONE;
-      set_tx_source();
-   }
+ //  if( tx_source != SIDETONE ){
+ //     tx_source = SIDETONE;
+ //     set_tx_source();
+ //  }
    LCD.printNumF(eer_time,5,0,ROW3);
 
    eer_adj = 0;
    if( sec == 15 ) sec = 0;
    if( sec == 3 ) tx();             // !!! two second transmit test out of 15 seconds
-   if( sec == 7 ) rx();
+   if( sec == 10 ) rx();
    ++sec;
-   trigger_ = 1;
-   delay(5);                           // these delays need to be longer than expected to capture edges
-   freq = ( sec & 1 ) ? 1500 : 2100;
-   amp  = ( sec & 1 ) ? 0.8 : 0.85;
-   SideTone.frequency(freq);
-   SideTone.amplitude(amp);
-   delay(20);                          // especially this one
-   trigger_ = 0;
+  // trigger_ = 1;
+  // delay(5);                           // these delays need to be longer than expected to capture edges
+  // freq = ( sec & 1 ) ? 1500 : 2100;
+  // amp  = ( sec & 1 ) ? 0.8 : 0.85;
+  // SideTone.frequency(freq);
+  // SideTone.amplitude(amp);
+  // delay(20);                          // especially this one
+  // trigger_ = 0;
    
  //  if ( sec < 12 && sec >= 3 ){
  //   if( freq <= 1000 ) freq -= 50;
@@ -1126,8 +1188,8 @@ void button_process( int t ){
 
     if( transmitting ){
          rx();                   // abort tx on any switch press. do we want this or just return OR
-         return;                 // maybe allow tap and double tap, not allow menu long press. !!!
-    }                            // problem will be the OLED, can't write during transmit.
+         return;                 // maybe allow tap and double tap, not allow menu long press.
+    }                            // problem will be the OLED, can't write during transmit, so can't use the menu's.
     
     switch( t ){
       case TAP:
@@ -1183,7 +1245,7 @@ void button_process( int t ){
 
 // once just volume, now general use knob function
 void volume_adjust( int val ){
-const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd ", "Tone    "}; 
+const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd ", "Tone    ", "TXdrive "}; 
 float pval; 
 
    if( val == 0  ){     // first entry, clear status line
@@ -1244,6 +1306,12 @@ float pval;
         set_bandwidth();
         pval = tone_;
       break;
+      case TX_DRIVE_U:
+        tx_drive += (float)val * 0.1;
+        tx_drive = constrain(tx_drive,0.0,8.0);
+        set_tx_source();
+        pval = tx_drive;
+      break;
    }
    
    #ifdef USE_LCD
@@ -1256,11 +1324,12 @@ float pval;
 }
 
 void set_tx_source(){
-int i;
-const float gains[] = { 2.0, 0.9, 1.0, 0.0 };      // control mic gain via volume, sidetone vol via volume, usb via Computer app
+int i;      
+float drive;
 
+  drive = ( tx_source == USBc ) ? 1.0 : tx_drive;   // control mic gain via volume, sidetone vol via volume, usb via Computer app
   for( i = 0; i < 4; ++i ) TxSelect.gain(i,0.0);
-  TxSelect.gain(tx_source,gains[tx_source]);
+  TxSelect.gain(tx_source,drive);
   
 }
 
@@ -1562,7 +1631,7 @@ static int last;       /* save the previous reading */
 int new_;              /* this reading */
 int b;
 
-   if( transmitting ) return 0;
+   if( transmitting && encoder_user != VOLUME ) return 0;              // allow adjusting tx drive while transmitting
    new_ = (digitalReadFast(EN_B) << 1 ) | digitalReadFast(EN_A);
    if( new_ == last ) return 0;       /* no change */
 
@@ -1863,20 +1932,31 @@ char cmd2;
 #define DIT 1
 #define DAH 2
 
-int read_paddles(){
+int read_paddles(){                    // keyer and/or PTT function
 int pdl;
+int tch_dit;
+int tch_dah;
+
 
    pdl = digitalReadFast( DAHpin ) << 1;
    pdl += digitalReadFast( DITpin );
 
-   pdl ^= 3;         // make logic positive
-   if( key_swap ){
-      pdl <<= 1;
-      if( pdl & 4 ) pdl += 1;
-      pdl &= 3;
+   pdl ^= 3;                                                // make logic positive
+   if( key_swap && mode == CW && key_mode != STRAIGHT ){    // only swap CW keyer mode. 
+      pdl <<= 1;                                            // don't swap the PTT pin, DITpin, when in SSB mode
+      if( pdl & 4 ) pdl += 1;                               // don't swap the CW straight mode pin DITpin
+      pdl &= 3;                                             // wire straight key to ring of plug
    }
 
-   // !!! add touch as input option
+   // add touch as input option. Any swap will be a physical swap of wires.
+   if( touch_key ){
+      tch_dit = touchRead( 0 );
+      tch_dah = touchRead( 1 );
+     // Serial.print(tch_dit); Serial.write(' ');
+     // Serial.println(tch_dah);
+      if( tch_dit > 600 ) pdl |= DIT;
+      if( tch_dah > 600 ) pdl |= DAH;
+   }
 
    return pdl;
 }
@@ -1887,7 +1967,7 @@ void side_tone_on(){
   SideTone.amplitude(side_gain);
   Volume.gain(0,0.0);
   Volume.gain(3,af_gain);   // or make this a constant to remove volume setting from the sidetone adjustment
-  // if( cw_practice == 0 ) tx();   !!! enable when ready
+  if( cw_practice == 0 ) tx();
 }
 
 void side_tone_off(){
@@ -1911,8 +1991,10 @@ int pdl;
       else if( txing == 0 && dbounce ) txing = 1, side_tone_on();
    }
    else{                           // SSB
-      if( transmitting && dbounce == 0 ) rx();
-      else if( transmitting == 0 && dbounce ) ;     // tx(); !!! when ready to enable
+//      if( transmitting && dbounce == 0 ) rx();           // version USB audio must use CAT tx control
+//      else if( transmitting == 0 && dbounce ) tx(); 
+      if( txing && dbounce == 0 ) txing = 0 , rx();        // version USB audio can use CAT or PTT tx control
+      else if( txing == 0 && dbounce ) txing = 1, tx(); 
    }
 }
 
@@ -1976,7 +2058,7 @@ int cread_indx;
 int dah_table[8] = { 20,20,20,20,20,20,20,20 };
 int dah_in;
 
-// try using both the tone detect and rms level added together, not sure they works well alone. 
+// try using both the tone detect and rms level added together, not sure they work well alone.  NOT done for this test
 
 int cw_detect(float av ){
 int det;                        // cw mark space detect
@@ -1985,28 +2067,31 @@ static float rav;               // running average of signals
 static int last_good;           // tone returns zero?
 int stored;
 
-static int mod;
-if( ++mod > 100 ){
- LCD.printNumF(av,4,LEFT,ROW3);
- LCD.printNumF(sig_rms,4,RIGHT,ROW3);
- mod = 0;
-}
+//static int mod;
+//if( ++mod > 100 ){
+// LCD.printNumF(av,4,LEFT,ROW3);
+// LCD.printNumF(rav,4,RIGHT,ROW3);    // was once printing sig_rms for the am style decoder !!!
+// mod = 0;
+//}
  
-   if( av < 0.0001 ) av = last_good;
+   if( av < 0.0001 ) av = last_good;      // sometimes tone object returns zero
    else last_good = av;
-   av += sig_rms;
-   
-   rav = 31.0*rav + av;     // try a longer time constant here.  Maybe shorter for faster code and
+   // av += sig_rms;                      // add in rms amplitude to the tone detector
+
+   det = ( av > cw_det_val * rav ) ? 1 : 0;
+   if( det ) av = av/2.0;                 // if we think have signal, don't add in as much to the noise signal level
+
+   rav = 31.0*rav + av;     // try a longer time constant here?  Maybe shorter for faster code and
    rav /= 32.0;             // longer for slower code would work best to avoid noise in between characters.
                             // trade off for fast fading signals being lost with longer constant.
    
-   det = ( av > cw_det_val * rav ) ? 1 : 0;       // simple AM detector, maybe could use the audio library tone object, may work better.
 
    det = cw_denoise( det );
        
    // debug arduino graph values to see signals
   // Serial.print( 10*av ); Serial.write(' '); Serial.print(10*rav); Serial.write(' ');
   // Serial.write(' '); Serial.println(det);
+
    stored = 0;
    if( det ){                // marking
       if( count > 0 ){
@@ -2265,9 +2350,9 @@ struct MENU {
 };
 
 struct MENU mode_menu = {
-   6,
+   5,
    "Select Mode",
-   { "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune" }          
+   { "CW", "LSB", "USB", "AM", "DIGI" }          
 };
 
 

@@ -21,6 +21,7 @@ extern void i2start( unsigned char c );
 extern void i2send( unsigned int data );
 extern void i2stop( );
 extern int rit_enabled;
+extern int saves;
 
 //  The Si5351 code
 class SI5351 {
@@ -51,20 +52,6 @@ public:
     //register uint32_t xmsb = (_div * (_fout + (int32_t)df)) % fxtal;  // xmsb = msb * fxtal/(128 * _MSC);
     //uint32_t msb128 = xmsb * 5*(32/32) - (xmsb/32);  // msb128 = xmsb * 159/32, where 159/32 = 128 * 0xFFFFF / fxtal; fxtal=27e6
 
-  
-  //  if( DEBUG_MP == 1 ){
-  //     static int mod;
-  //     ++mod;
-  //     if( /* mod > 0 && mod < 50 || */ trigger_){
-  //        Serial.print( df );  Serial.write(' ');     //  testing, get a slice of data
-  //        Serial.print( rav_df );  Serial.write(' ');
-  //        //Serial.print( php ); Serial.write(' ');
-  //        Serial.print( magp );
-  //        Serial.println(); 
-  //     }
-  //     if( mod > 20000 ) mod = 0;
-  //  }
-
     //#define _MSC  (F_XTAL/128)  // 114% CPU load  perfect alignment
     //uint32_t msb128 = (_div * (_fout + (int32_t)df)) % fxtal;
 
@@ -80,18 +67,33 @@ public:
     pll_regs[6] = BB1(msp2);
     pll_regs[7] = BB0(msp2);
   }
+  
   #define SI5351_ADDR 0x60              // I2C address of Si5351   (typical)
 
   inline void SendPLLBRegisterBulk(){
-    i2start( SI5351_ADDR );         //i2c.start();
-                                    //i2c.SendByte(SI5351_ADDR << 1);
-    i2send( 26+1*8 + 3 );           //i2c.SendByte(26+1*8 + 3);  // Write to PLLB
-    i2send( pll_regs[3]);           //i2c.SendByte(pll_regs[3]);
-    i2send( pll_regs[4]);           //i2c.SendByte(pll_regs[4]);
-    i2send( pll_regs[5]);           //i2c.SendByte(pll_regs[5]);
-    i2send( pll_regs[6]);           //i2c.SendByte(pll_regs[6]);
-    i2send( pll_regs[7]);           //i2c.SendByte(pll_regs[7]);
-    i2stop();                       //i2c.stop();
+  static uint8_t last_reg3;
+
+    if( last_reg3 == pll_regs[3] ){
+       ++saves;
+       i2start( SI5351_ADDR );         //i2c.start();
+       i2send( 26+1*8 + 4 );           //i2c.SendByte(26+1*8 + 3);  // Write to PLLB
+       i2send( pll_regs[4]);           //i2c.SendByte(pll_regs[4]);
+       i2send( pll_regs[5]);           //i2c.SendByte(pll_regs[5]);
+       i2send( pll_regs[6]);           //i2c.SendByte(pll_regs[6]);
+       i2send( pll_regs[7]);           //i2c.SendByte(pll_regs[7]);
+       i2stop();                       //i2c.stop();
+    }
+    else{
+       i2start( SI5351_ADDR );         //i2c.start();
+                                       //i2c.SendByte(SI5351_ADDR << 1);
+       i2send( 26+1*8 + 3 );           //i2c.SendByte(26+1*8 + 3);  // Write to PLLB
+       i2send( ( last_reg3 = pll_regs[3] ));           //i2c.SendByte(pll_regs[3]);
+       i2send( pll_regs[4]);           //i2c.SendByte(pll_regs[4]);
+       i2send( pll_regs[5]);           //i2c.SendByte(pll_regs[5]);
+       i2send( pll_regs[6]);           //i2c.SendByte(pll_regs[6]);
+       i2send( pll_regs[7]);           //i2c.SendByte(pll_regs[7]);
+       i2stop();                       //i2c.stop();
+    }
   }
 
   void SendRegister(uint8_t reg, uint8_t* data, uint8_t n){
@@ -111,9 +113,9 @@ public:
       
       //if(fout < 500000){ rdiv = 7; fout *= 128; }; // Divide by 128 for fout 4..500kHz
       //uint16_t d = (16 * fxtal) / fout;  // Integer part
-      //if(fout > 30000000) d = (34 * fxtal) / fout; // when fvco is getting too low (400 MHz)
-      
+      //if(fout > 30000000) d = (34 * fxtal) / fout; // when fvco is getting too low (400 MHz)     
       //uint16_t d = bandstack[band].d;
+      
       if( (d * (fout - 5000) / fxtal) != (d * (fout + 5000) / fxtal) ) d -= 2;     // d++;
       // Test if multiplier remains same for freq deviation +/- 5kHz, if not use different divider to make same
       // if(d % 2) d++; // forced even divider from bandstack // even numbers preferred for divider (AN619 p.4 and p.6)
@@ -178,4 +180,5 @@ public:
 //  #define SI_CLK_OE 3 
 
 };
-static SI5351 si5351;
+
+// static SI5351 si5351;
