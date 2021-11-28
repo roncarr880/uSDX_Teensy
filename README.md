@@ -24,3 +24,4 @@ The receiver uses the Weaver method of decoding SSB.  The vfo is not placed at z
 The transmitter re-uses a couple of the receiver audio blocks for the microphone input. The microphone, usb, or the sidetone can be selected as the transmit audio source, and the custom object MagPhase processes the audio and calculates the EER data for the Si5351 and PWM modulator.
 
 
+
