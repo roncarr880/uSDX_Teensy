@@ -99,7 +99,8 @@ void AudioFFT_Scope2::update(void){
     dat1 = blk1->data;
     dat2 = blk2->data;
     for( i = 0; i < AUDIO_BLOCK_SAMPLES; i++ ){
-       *dat1++ = SSB( (int32_t)*dat1, (int32_t)*dat2++, mode );                                              
+       *dat1 = SSB( (int32_t)*dat1, (int32_t)*dat2++, mode );
+       ++dat1;                                             
     }
     transmit( blk1 );
     release( blk1 );

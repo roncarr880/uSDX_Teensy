@@ -61,7 +61,7 @@
  *                  Added a tone control that changes the Q of the Bandwidth object to vary the tone.
  *    Version 1.51  Adding a gain of 10 in front of the CW tone detect object greatly improved the CW decoder.  Added a test to just            
  *                  load 4 registers in SendPLLBRegisterBulk when register 3 was the same as last time. 
- *    Version 1.52  Using a Goertzel filter as a simple FFT scope.              
+ *    Version 1.52  Using a Goertzel filter as a simple FFT scope.  Seems to work ok although update rate is slow.           
  *                  
  *             
  */
@@ -230,11 +230,11 @@ int encoder_user;
 #define TX_DRIVE_U  6
 int volume_user;
 
-// screen users - bottom part not used by freq display and status line
+// screen users of the bottom part not used by freq display and status line
 #define INFO 0
 #define CW_DECODE 1
 #define FFT_SCOPE 2
-int screen_user;
+int screen_user = FFT_SCOPE;
 
 #define MIC 0
 #define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
@@ -257,7 +257,7 @@ struct BAND_STACK{
    int fltr;
 };
 
-// "CW", "LSB", "USB", "AM", "DIGI", "Mem Tune"    mem tune special case
+// "CW", "LSB", "USB", "AM", "DIGI"
 #define CW   0
 #define LSB  1
 #define USB  2
@@ -366,7 +366,7 @@ AudioConnection          patchCord10(QLow, 0, TxSelect, 0);
 AudioConnection          patchCord11(QLow, 0, AMdet, 1);
 AudioConnection          patchCord12(ILow, 0, I_mixer, 0);
 AudioConnection          patchCord13(ILow, 0, AMdet, 0);
-AudioConnection          patchCord14(Scope2, Scope_det);
+AudioConnection          patchCord14(Scope2, Scope_det );
 AudioConnection          patchCord15(TxSelect, 0, MagPhase, 0);
 AudioConnection          patchCord16(sinBFO, 0, Q_mixer, 1);
 AudioConnection          patchCord17(cosBFO, 0, I_mixer, 1);
@@ -823,6 +823,8 @@ void setup() {
   CWdet.frequency(700,7);       // 600,6  1000,10 etc... aim for 10ms sample times.  Higher tones will be more accurate.(more samples)
   amp1.gain(10.0);              // more signal into the CW detector
 
+  Scope_det.frequency(300);
+
   AudioInterrupts();
 
   if( screen_user == INFO ){
@@ -830,6 +832,7 @@ void setup() {
     menu_cleanup();             // erase and display again
     info_headers();
   }
+  if( screen_user == FFT_SCOPE ) Scope2.setmode( 1 );
 
 }
 
@@ -1054,6 +1057,7 @@ void rx(){
     OLD.printNumI( magpmax, RIGHT, ROW2, 4, ' ' );
     magpmax = 0;
   #endif
+  if( screen_user == INFO ) info_headers();
 }
 
 
@@ -1143,7 +1147,78 @@ int t;
    //if( Serial.availableForWrite() > 20 ) radio_control();      // CAT.  Avoid any serial blocking. fails on Teensy, works on UNO.
    radio_control();                                                     // CAT
    if( mode == CW && CWdet.available() ) code_read( CWdet.read() );     // cw decoder using goertzel algorithm object
+   if( screen_user == FFT_SCOPE && Scope_det.available() ) scope_plot( Scope_det.read());
    
+}
+
+void scope_plot( float val ){
+static int mode = 1;
+static int pos = 1;
+int modep, posp;
+uint32_t  dat, dat2;
+uint8_t   low,mid,high;
+int col;
+
+   if( encoder_user != FREQ ) return;
+   if( transmitting ) return;
+   
+   //Serial.print( val );
+   modep = mode;   posp = pos;
+   if( ++pos > 61 ){
+       pos = 1;
+       mode = ( mode == 1 )? 2 : 1;
+       Scope2.setmode( mode );
+   }
+   Scope_det.frequency( 300 * pos, 3 * pos );         // start next freq bin detect. 3* works good but slow
+   //val = val * val;
+   val = val * val * val;
+   dat = (uint32_t)(16777215.0 * val);       // expand to 3 bytes
+   dat >>= 1;                                // shift out noise floor
+   //dat &= 0x7fff;
+   //Serial.println( dat );
+   //if( dat == 0 ) return;
+   dat2 = 0x800000;
+   //dat2 = 0;
+   while( dat ){                             // sort of log 2
+     dat2 >>= 1;
+     dat2 |= 0x800000;
+     dat >>= 1;
+   }
+
+   
+   low = dat2 >> 16;
+   mid = dat2 >> 8;
+   high = dat2;       // & 0xff;
+
+  // Serial.print( high );  Serial.write(' ');
+  // Serial.println( low );
+
+   
+   #ifdef USE_LCD
+     if( posp <= 41 ){
+        if( modep == 1 ) col = 40 + posp;
+        else col = 41 - posp;
+
+        LCD.gotoRowCol( 5,col );
+        LCD.write( low );
+        LCD.gotoRowCol( 4,col );
+        LCD.write( mid );
+        LCD.gotoRowCol( 3,col );
+        LCD.write( high );
+     }
+   #endif
+   #ifdef USE_OLED
+        if( modep == 1 ) col = 64 + posp;
+        else col = 65 - posp;
+
+        OLD.gotoRowCol( 7,col );
+        OLD.write( low );
+        OLD.gotoRowCol( 6,col );
+        OLD.write( mid );
+        OLD.gotoRowCol( 5,col );
+        OLD.write( high );
+   #endif
+  
 }
 
 // can show info on LCD but not on OLED while transmitting
@@ -1417,7 +1492,7 @@ char msg2[9];
 char buf[20];
 
     if( transmitting ) return;       // avoid OLED writes
-    if( mode > 4 ) return;           //!!! how to handle memory tuning
+    if( mode > 4 ) return;
     strncpy(msg,&modes[3*mode],3);
     if( mode == CW && cw_practice ) msg[2] = 'p';   // practice mode
     msg[3] = 0;
@@ -1543,25 +1618,29 @@ void menu_cleanup(){
    if( screen_user == INFO ) info_headers();
 }
 
-
 void info_headers(){    // print the information headers one time
 
   #ifdef USE_LCD
+    LCD.clrRow(5);
     LCD.gotoRowCol(4,0);
-    LCD.puts((char *)"C% ");      // getting tired of ISO C++ forbidden warning
-    LCD.gotoRowCol(4,38);
+    LCD.puts((char *)"cpu ");      // getting tired of ISO C++ forbidden warning
+    LCD.gotoRowCol(4,50);
     LCD.puts((char *)"A/D ");
     LCD.gotoRowCol(5,0);
     LCD.puts((char *)"BW ");
+    LCD.gotoRowCol(5,50);
+    LCD.puts((char *)"TSrc");
   #endif
 
   #ifdef USE_OLED
     OLD.gotoRowCol(4,0);
     OLD.puts((char *)"cpu ");
-    OLD.gotoRowCol(4,70);
+    OLD.gotoRowCol(4,88);
     OLD.puts((char *)"A/D ");
     OLD.gotoRowCol(6,0);
     OLD.puts((char *)"BW ");
+    OLD.gotoRowCol(6,88);
+    OLD.puts((char *)"TSrc");
   #endif
   
 }
@@ -2536,6 +2615,8 @@ int ret_val;
          break;
          case 7:
             screen_user = def_val;
+            if( screen_user != FFT_SCOPE ) Scope2.setmode( 0 );
+            else Scope2.setmode( 1 );                            // may be wrong mode for one pass
             ret_val = state = 0;
          break;  
          //default:  state = 0; ret_val = 0; break;  // temp
@@ -2630,14 +2711,16 @@ static int base;
 }
 
 
-// put this function here, a terrible hack to pick up the bandwidth menu defines
+// put this function here, a hack to pick up the bandwidth menu defines
 
 void report_info(){
 static int count;
 float val;
+char ts[2];
 
   if( peak1.available() == 0 ) return;
   val = peak1.read();
+  val = constrain(val,0.0,0.99);
   
   if( ++count < 333 ) return;            // once a second for printing
   if( DEBUG_MP ) eer_test();             //  tx testing
@@ -2647,15 +2730,22 @@ float val;
   if( screen_user != INFO ) return;
   if( transmitting ) return;
 
+  if( tx_source == MIC ) ts[0] = 'M';
+  else if( tx_source == USBc ) ts[0] = 'U';
+  else ts[0] = 'S';                               // sidetone
+  ts[1] = 0;
+
   #ifdef USE_LCD
-    LCD.printNumF( val,2,RIGHT,ROW4);
-    LCD.printNumI( AudioProcessorUsage(),2*6,ROW4,3,' ');   // 0 to 100 percent
+    LCD.printNumI( (int)100*val,RIGHT,ROW4);
+    LCD.printNumI( AudioProcessorUsage(),3*6,ROW4,3,' ');   // 0 to 100 percent
     LCD.print(bandwidth_menu.choice[filter],3*6,ROW5);
+    LCD.print(ts,RIGHT,ROW5);
   #endif
   #ifdef USE_OLED
-    OLD.printNumF( val,2,RIGHT,ROW4);
+    OLD.printNumI( (int)100*val,RIGHT,ROW4);
     OLD.printNumI( AudioProcessorUsage(),3*6,ROW4,3,' ');   // 0 to 100 percent.  More debug
     OLD.print(bandwidth_menu.choice[filter],3*6,ROW6);
+    OLD.print(ts,RIGHT,ROW6);
   #endif
      
 }
