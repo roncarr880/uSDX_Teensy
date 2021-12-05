@@ -25,7 +25,9 @@ The transmitter re-uses a couple of the receiver audio blocks for the microphone
 
 #### Wiring
 
-The QCX was built as outlined in the original PE1NNZ documentation( link above ) with some small differences.  A pullup was added on the signal RX, a pulldown was added on signal KEY OUT, a pulldown was added on signal SIG OUT.  A FET was added to switch the microphone signal ( DVM IC2 pin 25 ) to Teensy A3.
+The QCX was built as outlined in the original PE1NNZ documentation( link above ) with some small differences.  A pullup was added on the signal RX, a pulldown was added on signal KEY OUT, a pulldown was added on signal SIG OUT.  A FET (BS170)  was added to switch the microphone signal ( DVM IC2 pin 25 ) to Teensy A3.
+( note sometimes I refer to AREF as VREF in the pictures )
+
 ![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png)
 ![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
 ![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
