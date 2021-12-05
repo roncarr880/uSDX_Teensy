@@ -26,9 +26,11 @@ The transmitter re-uses a couple of the receiver audio blocks for the microphone
 #### Wiring
 
 The QCX was built as outlined in the original PE1NNZ documentation( link above ) with some small differences.  A pullup was added on the signal RX, a pulldown was added on signal KEY OUT, a pulldown was added on signal SIG OUT.  A FET (BS170)  was added to switch the microphone signal ( DVM IC2 pin 25 ) to Teensy A3.
+
 ( note sometimes I refer to AREF as VREF in the pictures )
 
 ![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png)
+The QCX+ is wired so it works with both the PE1NNZ ATMEGA 328 program and with the Teensy 3.2.  The headphone audio circuit is duplicated but doesn't need to be.  I used a duplicate circuit as that was easier than finding another Jxx point on the QCX to bring the SIDETONE net up to the developement board. 
 ![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
 ![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
 
