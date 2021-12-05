@@ -23,5 +23,11 @@ The receiver uses the Weaver method of decoding SSB.  The vfo is not placed at z
 
 The transmitter re-uses a couple of the receiver audio blocks for the microphone input. The microphone, usb, or the sidetone can be selected as the transmit audio source, and the custom object MagPhase processes the audio and calculates the EER data for the Si5351 and PWM modulator.
 
+#### Wiring
+
+The QCX was built as outlined in the original PE1NNZ documentation( link above ) with some small differences.  A pullup was added on the signal RX, a pulldown was added on signal KEY OUT, a pulldown was added on signal SIG OUT.  A FET was added to switch the microphone signal ( DVM IC2 pin 25 ) to Teensy A3.
+![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png)
+![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
+![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
 
 
