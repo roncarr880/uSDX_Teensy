@@ -29,6 +29,7 @@ The QCX was built as outlined in the original PE1NNZ documentation( link above )
 
 ( note sometimes I refer to AREF as VREF in the pictures )
 
+I did not install C4 C7 as adding them caused processor noise to enter the receiver on a previous project.
 ![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png)
 The QCX+ is wired so it works with both the PE1NNZ ATMEGA 328 program and with the Teensy 3.2.  The headphone audio circuit is duplicated but doesn't need to be.  I used a duplicate circuit as that was easier than finding another Jxx point on the QCX to bring the SIDETONE net up to the developement board. 
 ![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
