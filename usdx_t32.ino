@@ -64,12 +64,18 @@
  *    Version 1.52  Using a Goertzel filter as a simple FFT scope.  Seems to work ok although update rate is slow.  Cleaned up some of       
  *                  the old code that was commented out as we seem to have settled upon a design.  For DIGI mode, increased Weaver
  *                  bandwidth to put the hole in the audio at 3000 hz. Cut in some low pass filters for other bands in series with the
- *                  17 meter lowpass.  Noticed I now get some interference lines on the WSJT waterfall.
+ *                  17 meter lowpass.  Noticed I now get some interference lines on the WSJT waterfall.  Removed the alternate low pass
+ *                  filters provision as transmit current was excessive on some bands.  So back to 17 meters tx/rx and just rx on the 
+ *                  lower bands. Using a total of 4 Goertzel filters in the bandscope which makes it run 4 times faster than before. 
+ *    Version 1.53  Found a dynamic cassette style microphone in my junk collection.  It has a mono plug so am adding an option to detect
+ *                  if DIT is shorted on power up and disable the hardware keyer and PTT.  The idea is to use capacitive touch as the
+ *                  keyer/PTT when this condition is detected.  Will add a microphone preamp circuit, 1st try will be a common base amp.
+ *                  
  *                  
  *             
  */
 
-#define VERSION 1.52
+#define VERSION 1.53
 
 // Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
 // Mic should have Mic on Tip, PTT on Ring for this radio.
@@ -244,6 +250,9 @@ int screen_user = FFT_SCOPE;
 #define SIDETONE 2 
 int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out. 
 
+#define DIT 1
+#define DAH 2
+int key_mask = DIT + DAH;       // feature to disable hardware keyer/PTT if jack is shorted upon power up.
 
 // Menus:  Long press to enter
 //   STICKY_MENU 0 :  Tap makes a selection and exits.   Double tap exits without a selection.
@@ -546,11 +555,24 @@ void setup() {
    pinMode( RX, INPUT );                 // let the 10k pullup to 5 volts as opposed to holding at 3.3 with output pin
    pinMode( TXAUDIO_EN, OUTPUT );
    digitalWriteFast( TXAUDIO_EN, LOW );
-   pinMode( DAHpin, INPUT );                // has a 10k pullup with the microphone circuit
+
+     // **** this section could be altered as desired for a electret microphone but may work as is.
+     // But AVCC would need to be wired to 3.3 volts.
+   pinMode( DAHpin, INPUT_PULLUP );         // has a 10k pullup with the microphone circuit
                                             // but I added a jumper connection for ssb
                                             // so this needs to be INPUT_PULLUP when in CW mode and jumper open in CW position.
-   pinMode( DITpin, INPUT_PULLUP );         // Don't remember seeing any pullup on this net.
-
+                                            // !!! it seems I failed to wire AVCC up to the development board, but that is ok as
+                                            // I plan to use a dynamic microphone and mic bias is not desired.
+   pinMode( DITpin, INPUT_PULLUP );
+   
+   delay(1);
+   if( read_paddles() != 0 ){
+        key_mask = 0;                       // disable the hardware keyer and hardware PTT as it has a short ( microphone connected ? )
+        pinMode( DAHpin, INPUT );           // remove any current through the dynamic microphone
+        pinMode( DITpin, INPUT );
+   }
+     // ****
+   
    Serial.begin(1200);                   // usb serial, baud rate makes no difference.  Argo V baud rate is 1200.
 
    pinMode(EN_A,INPUT_PULLUP);
@@ -784,7 +806,7 @@ void rx(){
   si5351.SendRegister(3, 0b11111100);      // enable rx clocks
   //delay(1);                                // !!! maybe needed for i2c delay to suppress any rx thumps
   set_af_gain( af_gain );                  // unmute rx
-  agc_sig = 0.2;                           // start with 20 over volume setting in agc system
+  if( mode != DIGI ) agc_sig = 0.2;        // start with 20 over volume setting in agc system
   #ifdef USE_OLED                          // print max mic volume during transmit
     OLD.print(( char * )"Mod ", 128 - 8*6, ROW2);
     OLD.printNumI( magpmax, RIGHT, ROW2, 4, ' ' );
@@ -1306,8 +1328,8 @@ void mode_change( int to_mode ){
   }
   //set_af_gain(af_gain);                              // listen to the correct audio path
   set_bandwidth();                                   // bandwidth is mode dependent
-  if( mode == CW ) pinMode(DAHpin, INPUT_PULLUP);    // accomdate the hardware jumper difference when in CW mode. 
-  else pinMode(DAHpin, INPUT );                      // Let 10k pullup work alone. 
+  //if( mode == CW ) pinMode(DAHpin, INPUT_PULLUP);    // accomdate the hardware jumper difference when in CW mode. 
+  //else pinMode(DAHpin, INPUT );                      // Let 10k pullup work alone. !!! not wired it seems
   delay(1);
   si5351.SendRegister(177, 0xA0);                    // reset PLL's twice, sometimes on wrong sideband or in never never land
 }
@@ -1783,9 +1805,6 @@ char cmd2;
 
 /********************* end Argo V CAT ******************************/
 
-#define DIT 1
-#define DAH 2
-
 int read_paddles(){                    // keyer and/or PTT function
 int pdl;
 int tch_dit;
@@ -1796,6 +1815,7 @@ int tch_dah;
    pdl += digitalReadFast( DITpin );
 
    pdl ^= 3;                                                // make logic positive
+   pdl &= key_mask;                                         // apply disable mask ( mono plug microphone is connected on powerup )
    if( key_swap && mode == CW && key_mode != STRAIGHT ){    // only swap CW keyer mode. 
       pdl <<= 1;                                            // don't swap the PTT pin, DITpin, when in SSB mode
       if( pdl & 4 ) pdl += 1;                               // don't swap the CW straight mode pin DITpin
