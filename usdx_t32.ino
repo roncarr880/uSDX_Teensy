@@ -69,7 +69,13 @@
  *                  lower bands. Using a total of 4 Goertzel filters in the bandscope which makes it run 4 times faster than before. 
  *    Version 1.53  Found a dynamic cassette style microphone in my junk collection.  It has a mono plug so am adding an option to detect
  *                  if DIT is shorted on power up and disable the hardware keyer and PTT.  The idea is to use capacitive touch as the
- *                  keyer/PTT when this condition is detected.  Will add a microphone preamp circuit, 1st try will be a common base amp.
+ *                  keyer/PTT when this condition is detected.  Building a microphone preamp circuit in the footprint of IC10 and 
+ *                  abandon the existing DVM circuit for the Teensy version. ( the DVM curcuit remains on the QCX board if I ever wish to 
+ *                  use the ATMega328 again ). Preamp design from http://www.zen22142.zen.co.uk/Circuits/Audio/lf071_mic.htm with a few of
+ *                  the 10uf caps changed to 1uf.  Decided to move the microphone to the CAT jack, and wired the Teensy version separate 
+ *                  from the original uSDX design with the microphone and paddle using the same jack.  Worked on the magnitude and phase
+ *                  some more attempting to suppress spikes in phase when amplitude is low.
+ *                  
  *                  
  *                  
  *             
@@ -106,13 +112,11 @@
  */
 
 //  Issues / to do 
-//  test RIT actually works as described and tx remains fixed for CW and SSB modes.
 //  test Transmitter quality in microphone voice mode, and computer voice mode
 //  C4 C7 - does adding them cause processor noise in the front end.
 //  Measure audio image response, and alias images at +-44k away.
 //  Add peak objects again to see how the gain distribution is through the stages.
 //  Cut Vusb etch on the Teensy.
-//  Add plug in low pass filters for bands other than 17 meters.
 //  Cap touch keyer/ptt inputs wired.  
  
  // QCX pin definitions mega328 to Teensy 3.2
@@ -161,8 +165,11 @@
 #define USE_LCD
 
                                       
-#define DEBUG_MP  0                  // !!! careful, this actually transmits now if set to 2.  Think will delete this
-                                     // eventually and remove all the if statements it causes in the code
+#define DEBUG_MP  0                  // !!!  Think will delete this eventually and remove all the if statements it causes in the code
+                                     // There is a testing anomally where if the PWM on KEYOUT is enabled and the Teensy powered over
+                                     // usb and the radio not powered, the radio gets 4 volts and there is feedback in the rx to mic
+                                     // circuits. Will that happen when the radio is powered?  DEBUG_MP set to 1 disables the PWM and
+                                     // feedback not present and serial prints active - this is a testing mode. 
                               
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
@@ -173,7 +180,7 @@
  #include <LCD5110_Basic_t.h>
 #endif
 #ifdef USE_OLED 
- #include <OLED1306_Basic.h>
+ #include <OLED1306_Basic.h>   // this is the LCD5110 library modified to use I2C for OLED 1306.
 #endif
 
 #include <i2c_t3.h>            // non-blocking wire library
@@ -243,7 +250,7 @@ int multi_user;
 #define INFO 0
 #define CW_DECODE 1
 #define FFT_SCOPE 2
-int screen_user = FFT_SCOPE;
+int screen_user = INFO;  //!!!FFT_SCOPE;  test mic
 
 #define MIC 0
 #define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
@@ -311,7 +318,7 @@ float agc_sig = 0.3;           // made global so can set it after tx and have rx
 int attn2;                     // attenuator using T/R switch, very large decrease in volume
 int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
-float tx_drive = 1.0;          // but probably best to adjust USBc drive with the computer
+float tx_drive = 6.0;          // but probably best to adjust USBc drive with the computer
                                // and use this for the microphone and sidetone testing tx level
 
 
@@ -460,6 +467,7 @@ float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
 static int prev_phase;
+static int last_dp;
 int phase_;
 int mag;
 
@@ -469,6 +477,21 @@ int mag;
    }
 
    // process Mag and Phase
+
+   mag = MagPhase.mvalue(eer_count);
+   if( mode == DIGI ){
+       rav_mag = 27853 * rav_mag + 4950 * mag;
+       rav_mag >>= 15;
+       mag = rav_mag;
+   }
+   // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
+   mag >>= 5;
+   mag = constrain(mag,0,1024);
+   magp = mag;
+   if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
+   //analogWrite( KEYOUT, mag );
+
+   // when signal level is low, phase gets very noisy
    phase_ = MagPhase.pvalue(eer_count);
    int dp = phase_ - prev_phase;
    prev_phase = phase_;
@@ -476,7 +499,8 @@ int mag;
    
       if( dp < 0 ) dp = dp + _UA;
       // removed scaling dp, instead have _UA same as sample rate
-      if( dp < 3100  ){                              // skip sending out of tx bandwidth freq range
+      if( dp < 3100 && mag > 40  ){                  // skip sending out of tx bandwidth freq range, suppress spikes
+         last_dp = dp;                               // print value before changed for sideband and bfo
          if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
          else dp -= bfo;
          if( mode == DIGI ){                         // filter the phase results, good idea or not?
@@ -490,20 +514,9 @@ int mag;
           if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
               si5351.SendPLLBRegisterBulk();
               else ++overs;                     //  Out of time, count skipped I2C transactions
-      }     
+      }
+      //else last_dp = 0;   // !!! testing   
            
-   mag = MagPhase.mvalue(eer_count);
-   if( mode == DIGI ){
-       rav_mag = 27853 * rav_mag + 4950 * mag;
-       rav_mag >>= 15;
-       mag = rav_mag;
-   }
-   // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
-   mag >>= 5;
-   mag = constrain(mag,0,1024);
-   magp = mag;
-   //if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
-   analogWrite( KEYOUT, mag );
 
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
@@ -533,13 +546,13 @@ int mag;
        if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
        static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
        ++mod;
-       if(  mod > 0 && mod < 50 /*||  trigger_ */){
-  //        Serial.print( dp );  Serial.write(' ');     //  testing, get a small slice of data
+       //if(  mod > 0 && mod < 50 /*||  trigger_ */){
+          Serial.print( last_dp );  Serial.write(' ');     //  testing, get a small slice of data
   //        Serial.print( rav_df );  Serial.write(' ');
   //        //Serial.print( php ); Serial.write(' ');
           Serial.print( magp );
           Serial.println(); 
-       }
+       //}
        if( mod > 20000 ) mod = 0;
     }
 
@@ -570,6 +583,7 @@ void setup() {
         key_mask = 0;                       // disable the hardware keyer and hardware PTT as it has a short ( microphone connected ? )
         pinMode( DAHpin, INPUT );           // remove any current through the dynamic microphone
         pinMode( DITpin, INPUT );
+        touch_key = 1;                      // turn on touch keyer/ptt
    }
      // ****
    
@@ -1014,7 +1028,7 @@ int i;
        LCD.print((char *)"Ovr ",6*8,ROW0);
    }
 
-   if( ++count < 500 ) return;                // half second updates
+   if( ++count < 200 ) return;                // partial second updates
    count = 0;
    num = AudioProcessorUsage();
    num = constrain(num,0,99);
@@ -1051,9 +1065,9 @@ float amp;
    LCD.printNumF(eer_time,5,0,ROW3);
 
    eer_adj = 0;
-   if( sec == 15 ) sec = 0;
-   if( sec == 3 ) tx();             // !!! two second transmit test out of 15 seconds
-   if( sec == 10 ) rx();
+   if( sec == 10 ) sec = 0;
+   if( sec == 1 ) tx();             // !!! n second transmit test out of N seconds
+   if( sec == 3 ) rx();
    ++sec;
   // trigger_ = 1;
   // delay(5);                           // these delays need to be longer than expected to capture edges
@@ -1217,6 +1231,11 @@ float drive;
   drive = ( tx_source == USBc ) ? 1.0 : tx_drive;   // control mic gain via volume, sidetone vol via volume, usb via Computer app
   for( i = 0; i < 4; ++i ) TxSelect.gain(i,0.0);
   TxSelect.gain(tx_source,drive);
+  //if( tx_source == MIC ){                           // sub audible tone mixed in to keep phase calc happy?
+  //   SideTone.frequency( 5 );                       // Hilbert doesn't work well below 300 hz
+  //   SideTone.amplitude( 0.1 );                     // but this shows some promise to remove noise on tx
+  //   TxSelect.gain(SIDETONE,0.8);
+  //}
   
 }
 
@@ -1504,7 +1523,9 @@ static int last;       /* save the previous reading */
 int new_;              /* this reading */
 int b;
 
-   if( transmitting && encoder_user != MULTI_FUN ) return 0;              // allow adjusting tx drive while transmitting
+   // if( transmitting && encoder_user != MULTI_FUN ) return 0;         // allow adjusting tx drive while transmitting
+   if( transmitting ) return 0;                                         // maybe that is not a good idea when using the OLED, program hangs
+   
    new_ = (digitalReadFast(EN_B) << 1 ) | digitalReadFast(EN_A);
    if( new_ == last ) return 0;       /* no change */
 
@@ -1828,8 +1849,8 @@ int tch_dah;
       tch_dah = touchRead( 1 );
      // Serial.print(tch_dit); Serial.write(' ');
      // Serial.println(tch_dah);
-      if( tch_dit > 600 ) pdl |= DIT;
-      if( tch_dah > 600 ) pdl |= DAH;
+      if( tch_dit > 700 ) pdl |= DIT;
+      if( tch_dah > 700 ) pdl |= DAH;
    }
 
    return pdl;
@@ -2453,7 +2474,7 @@ char ts[2];
   val = constrain(val,0.0,0.99);
   
   if( ++count < 333 ) return;            // once a second for printing
-  if( DEBUG_MP ) eer_test();             //  tx testing
+  //if( DEBUG_MP ) eer_test();             //  tx testing
   count = 0;
 
   if( encoder_user != FREQ ) return;
