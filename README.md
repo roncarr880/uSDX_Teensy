@@ -36,3 +36,7 @@ The QCX+ is wired so it works with both the PE1NNZ ATMEGA 328 program and with t
 ![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
 
 
+##### Circuit Changes
+
+I have since removed the black DVM wire and the purple wire to the DAH net and separated the microphone from the paddle.  A jack was installed at the CAT position and wired to a microphone preampliphier circuit installed in the footprint of IC10.
+![wire4](https://github.com/roncarr880/uSDX_Teensy/blob/main/usdx_mic.png)
