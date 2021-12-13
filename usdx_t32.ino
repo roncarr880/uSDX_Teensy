@@ -74,14 +74,22 @@
  *                  use the ATMega328 again ). Preamp design from http://www.zen22142.zen.co.uk/Circuits/Audio/lf071_mic.htm with a few of
  *                  the 10uf caps changed to 1uf.  Decided to move the microphone to the CAT jack, and wired the Teensy version separate 
  *                  from the original uSDX design with the microphone and paddle using the same jack.  Worked on the magnitude and phase
- *                  some more attempting to suppress spikes in phase when amplitude is low.
+ *                  some more attempting to suppress spikes in phase when amplitude is low.  Mic Tx audio is terrible at this point.
+ *    Version 1.54  Reducing USB audio gain below 1.0 as a potential fix for strange program hangup. ( voice audio on USB with max PC                
+ *                  microphone volume.  Doesn't hang when PC microphone volume is less than 100 )  Reducing agc1 volume below 1.0 to make 
+ *                  sure the following IIR filters do not get overdriven ( voice mode using microphone ).  Trying 0.98 for a value.
+ *                  Add a feature to allow delaying the phase changes with respect to the amplitude changes. uSDX has a delay of 1 sample,
+ *                  allow a choice of delay of up to 7 samples. Implemented tx_drive after the MagPhase calculation rather than before. 
+ *                  Note: uSDX also adds a dc offset of 32 to microphone adc values and that is something we can try.
+ *                  
+ *                 
  *                  
  *                  
  *                  
  *             
  */
 
-#define VERSION 1.53
+#define VERSION 1.54
 
 // Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
 // Mic should have Mic on Tip, PTT on Ring for this radio.
@@ -111,13 +119,21 @@
  *    Seconday use of long press is to turn off RIT.
  */
 
-//  Issues / to do 
-//  test Transmitter quality in microphone voice mode, and computer voice mode
-//  C4 C7 - does adding them cause processor noise in the front end.
+//  Issues / to do
+//  check that the microphone preamp is in a linear region after we added the series resistor in vcc feed. 
+//  C4 C7 - does adding them cause processor noise in the front end.  They are currently uninstalled. 
 //  Measure audio image response, and alias images at +-44k away.
-//  Add peak objects again to see how the gain distribution is through the stages.
 //  Cut Vusb etch on the Teensy.
-//  Cap touch keyer/ptt inputs wired.  
+//  Cap touch keyer/ptt inputs wired.
+//  Dit Dah and PTT seem to be mixed up.  Wiring error or code error?  ( PTT is on Dah, expected it on Dit ).
+//  Investigate the filter method used in usdx code for the morse decode signal level. Exponential averaging?
+//  Voice transmit with a microphone sounds terrible.  FT8 using USB audio however works great. 
+//
+//  If a PC is used as a microphone driving the transmitter in USB mode and the PC microphone volume is at max, the program hangs when
+//     returning to rx mode.  Seems to be when the AGC is releasing.
+//     This is accomplished by using the PC feature "listen to this device" with microphone in and Teensy USB out.
+//     This was a transmit test and not how the radio would normally be used.   Note: save this text. 
+//
  
  // QCX pin definitions mega328 to Teensy 3.2
 /* 
@@ -153,11 +169,11 @@
 */
 #define RX          4
 #define ATTN2       4
-#define KEYOUT      5
+#define KEYOUT      5  //20
 #define DAHpin     22
 #define DITpin     23
 #define PTT        23
-#define TXAUDIO_EN 14           // switches a FET to put DVM mic signal on Q audio input A3.
+#define TXAUDIO_EN 14             // switches a FET to put DVM mic signal on Q audio input A3.
 
 //  Pick a screen:  Nokia LCD or I2C 128x64 OLED
 //  Running both together yields redefinition warnings as they are basically the same library, but it works.
@@ -454,6 +470,7 @@ SI5351 si5351;                 // maybe it should be done this way.
 #define DRATE 6                      // decimation rate used in MagPhase
 #define F_SAMP_TX (44117/DRATE)      // ! setting _UA and sample rate the same, removed scaling calculation
 #define _UA (44117/DRATE)            // match definition in MagPhase.cpp
+#define DLAY 6                       // delay phase changes with respect to amplitude. actual delay is 8 - DLAY in a modulo way. 
 
 int eer_count;
 int temp_count;          // !!! debug
@@ -468,8 +485,11 @@ void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
 static int prev_phase;
 static int last_dp;
+static int dline[8];     // phase change delay
+static int din;          // delay index
 int phase_;
 int mag;
+int dp;
 
    if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data( more now with 1/6 sample rate )
       eer_count = 0;
@@ -480,31 +500,43 @@ int mag;
 
    mag = MagPhase.mvalue(eer_count);
    if( mode == DIGI ){
-       rav_mag = 27853 * rav_mag + 4950 * mag;
+       rav_mag = 27853 * rav_mag + 4915 * mag;
        rav_mag >>= 15;
        mag = rav_mag;
    }
-   // will start with 10 bits, scale up or down, test if over 1024, write PWM pin for KEY_OUT.
+   else if( tx_source == MIC ){             // implement tx drive feature for voice mode only
+       mag = (float)mag * tx_drive;
+   }
+   // will start with 10 bits, test if over 1024, write PWM pin for KEY_OUT.
    mag >>= 5;
    mag = constrain(mag,0,1024);
    magp = mag;
-   if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
-   //analogWrite( KEYOUT, mag );
+   //if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
+   analogWrite( KEYOUT, mag );
 
    // when signal level is low, phase gets very noisy
    phase_ = MagPhase.pvalue(eer_count);
-   int dp = phase_ - prev_phase;
+   dp = phase_ - prev_phase;
    prev_phase = phase_;
    php = phase_ ;                        // !!! testing print phase
    
-      if( dp < 0 ) dp = dp + _UA;
       // removed scaling dp, instead have _UA same as sample rate
-      if( dp < 3100 && mag > 40  ){                  // skip sending out of tx bandwidth freq range, suppress spikes
+      if( dp < -200 ) dp = dp + _UA;                 // allow some audio image to transmit, avoid large positive spikes when not crossing
+                                                     // quadrants in arctan ( large negative spike has _UA added )
+      // implement the delay line for voice tx, don't break the DIGI modes that are working well
+      if( tx_source == MIC ){
+         dline[din] = dp;
+         dp = dline[ (din + DLAY) & 7 ];
+         ++din;
+         din &= 7;
+      }
+                                                     
+      if( dp < 3100  /*&& mag > 50 */ ){             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
          last_dp = dp;                               // print value before changed for sideband and bfo
          if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
          else dp -= bfo;
          if( mode == DIGI ){                         // filter the phase results, good idea or not?
-            rav_df = 27853 * rav_df + 4950 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
+            rav_df = 27853 * rav_df + 4940 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
             rav_df >>= 15;
            // if( DEBUG_MP == 0 ) dp = rav_df;       // see the difference on serial plotter, else use new value
             dp = rav_df;                             // see the difference on scope dummy load when self testing tx.   
@@ -543,16 +575,16 @@ int mag;
       if( u ) EER_timer.update( eer_time);
    }
 
-       if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
+    if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
        static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
        ++mod;
-       //if(  mod > 0 && mod < 50 /*||  trigger_ */){
+       if(  mod > 0 && mod < 50 /*||  trigger_ */){
           Serial.print( last_dp );  Serial.write(' ');     //  testing, get a small slice of data
   //        Serial.print( rav_df );  Serial.write(' ');
   //        //Serial.print( php ); Serial.write(' ');
           Serial.print( magp );
           Serial.println(); 
-       //}
+       }
        if( mod > 20000 ) mod = 0;
     }
 
@@ -712,7 +744,7 @@ void set_af_gain(float g){
 
 void set_agc_gain(float g ){
 
-  if( transmitting) return;   // disable or leave agc active during transmit ? does it work for MIC compression ? 
+  if( transmitting ) return;   // disable or leave agc active during transmit ? does it work for MIC compression ? 
   AudioNoInterrupts();
     agc1.gain(g);
     agc2.gain(g);
@@ -779,11 +811,12 @@ void tx(){
        QLow.setLowpass( 1,2800,0.51763809);
        QLow.setLowpass( 2,2800,0.70710678);
        QLow.setLowpass( 3,2800,1.9318517);
-       agc2.gain(1.0);
+       agc2.gain(0.98);
 
        // configured TX mux probably somewhere else in menu system, for microphone or usb source         
     }
     analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+    analogWrite(KEYOUT,0);
     MagPhase.setmode(1);
     EER_timer.begin(EER_function,eer_time);
   }
@@ -1028,7 +1061,7 @@ int i;
        LCD.print((char *)"Ovr ",6*8,ROW0);
    }
 
-   if( ++count < 200 ) return;                // partial second updates
+   if( ++count < 100 ) return;                // partial second updates
    count = 0;
    num = AudioProcessorUsage();
    num = constrain(num,0,99);
@@ -1053,28 +1086,29 @@ static int sec;
 static int freq = 700;
 float amp;
 
+return;
   // Serial.print(sec);   Serial.write(' ');
   // Serial.print(eer_adj); Serial.write(' ');
   // Serial.print(temp_count); Serial.write(' ');
   // Serial.print( eer_time,5 ); Serial.write(' ');
   // Serial.println( overs );
- //  if( tx_source != SIDETONE ){
- //     tx_source = SIDETONE;
- //     set_tx_source();
- //  }
+   if( tx_source != SIDETONE ){
+      tx_source = SIDETONE;
+      set_tx_source();
+   }
    LCD.printNumF(eer_time,5,0,ROW3);
 
    eer_adj = 0;
    if( sec == 10 ) sec = 0;
    if( sec == 1 ) tx();             // !!! n second transmit test out of N seconds
-   if( sec == 3 ) rx();
+   if( sec == 5 ) rx();
    ++sec;
   // trigger_ = 1;
   // delay(5);                           // these delays need to be longer than expected to capture edges
-  // freq = ( sec & 1 ) ? 1500 : 2100;
-  // amp  = ( sec & 1 ) ? 0.8 : 0.85;
-  // SideTone.frequency(freq);
-  // SideTone.amplitude(amp);
+   freq = ( sec & 1 ) ? 1200 : 2100;
+   amp  = ( sec & 1 ) ? 0.4 : 0.85;
+   SideTone.frequency(freq);
+   SideTone.amplitude(amp);
   // delay(20);                          // especially this one
   // trigger_ = 0;
    
@@ -1228,13 +1262,15 @@ void set_tx_source(){
 int i;      
 float drive;
 
-  drive = ( tx_source == USBc ) ? 1.0 : tx_drive;   // control mic gain via volume, sidetone vol via volume, usb via Computer app
+
+  //drive = ( tx_source == MIC ) ? tx_drive : 0.98;   // control mic gain via volume, sidetone vol via sidetone amplitude, usb via Computer app
+  drive = 0.98;                                       // make sure MagPhase object not overloaded, implement increase drive elsewhere.
   for( i = 0; i < 4; ++i ) TxSelect.gain(i,0.0);
   TxSelect.gain(tx_source,drive);
-  //if( tx_source == MIC ){                           // sub audible tone mixed in to keep phase calc happy?
-  //   SideTone.frequency( 5 );                       // Hilbert doesn't work well below 300 hz
+  //if( tx_source == MIC ){                           // (sub) or audible tone mixed in to keep phase calc happy?
+  //   SideTone.frequency( 15 );                      // Hilbert doesn't work well below 300 hz
   //   SideTone.amplitude( 0.1 );                     // but this shows some promise to remove noise on tx
-  //   TxSelect.gain(SIDETONE,0.8);
+  //   TxSelect.gain(SIDETONE,0.2);                   // 0.5
   //}
   
 }
@@ -2474,7 +2510,7 @@ char ts[2];
   val = constrain(val,0.0,0.99);
   
   if( ++count < 333 ) return;            // once a second for printing
-  //if( DEBUG_MP ) eer_test();             //  tx testing
+  if( DEBUG_MP ) eer_test();             //  tx testing
   count = 0;
 
   if( encoder_user != FREQ ) return;
