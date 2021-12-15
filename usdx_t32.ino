@@ -181,7 +181,7 @@
 #define USE_LCD
 
                                       
-#define DEBUG_MP  0                  // !!!  Think will delete this eventually and remove all the if statements it causes in the code
+#define DEBUG_MP  1                  // !!!  Think will delete this eventually and remove all the if statements it causes in the code
                                      // There is a testing anomally where if the PWM on KEYOUT is enabled and the Teensy powered over
                                      // usb and the radio not powered, the radio gets 4 volts and there is feedback in the rx to mic
                                      // circuits. Will that happen when the radio is powered?  DEBUG_MP set to 1 disables the PWM and
@@ -252,7 +252,7 @@ IntervalTimer EER_timer;
 int encoder_user;
 
 // volume users - general use of volume code
-#define MAX_VUSERS 7
+#define MAX_VUSERS 8
 #define VOLUME_U   0
 #define AGC_GAIN_U 1
 #define CW_DET_U   2
@@ -260,6 +260,7 @@ int encoder_user;
 #define WPM_U      4
 #define TONE_U      5
 #define TX_DRIVE_U  6
+#define TX_PHASE_U  7
 int multi_user;
 
 // screen users of the bottom part not used by freq display and status line
@@ -334,8 +335,9 @@ float agc_sig = 0.3;           // made global so can set it after tx and have rx
 int attn2;                     // attenuator using T/R switch, very large decrease in volume
 int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
-float tx_drive = 6.0;          // but probably best to adjust USBc drive with the computer
+float tx_drive = 6.0;          // probably best to adjust USBc drive with the computer
                                // and use this for the microphone and sidetone testing tx level
+int phase_delay = 4;           // sample delay between modulation change and phase change, 0 to 7                               
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -470,10 +472,9 @@ SI5351 si5351;                 // maybe it should be done this way.
 #define DRATE 6                      // decimation rate used in MagPhase
 #define F_SAMP_TX (44117/DRATE)      // ! setting _UA and sample rate the same, removed scaling calculation
 #define _UA (44117/DRATE)            // match definition in MagPhase.cpp
-#define DLAY 6                       // delay phase changes with respect to amplitude. actual delay is 8 - DLAY in a modulo way. 
 
 int eer_count;
-int temp_count;          // !!! debug
+//int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
 int overs;               // I2C not ready for the next set of register data
 int saves;               // short write bulk
@@ -518,7 +519,7 @@ int dp;
    phase_ = MagPhase.pvalue(eer_count);
    dp = phase_ - prev_phase;
    prev_phase = phase_;
-   php = phase_ ;                        // !!! testing print phase
+   php = phase_ ;                        // !!! testing printing phase
    
       // removed scaling dp, instead have _UA same as sample rate
       if( dp < -200 ) dp = dp + _UA;                 // allow some audio image to transmit, avoid large positive spikes when not crossing
@@ -526,12 +527,17 @@ int dp;
       // implement the delay line for voice tx, don't break the DIGI modes that are working well
       if( tx_source == MIC ){
          dline[din] = dp;
-         dp = dline[ (din + DLAY) & 7 ];
+         dp = dline[ (din + (8-phase_delay)) & 7 ];
          ++din;
          din &= 7;
       }
                                                      
-      if( dp < 3100  /*&& mag > 50 */ ){             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
+      if( dp < 3100 /*&& mag > 40 */){             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
+         if( mag < 40 ){                           // leak toward zero, use last_dp
+            if( last_dp > 0 ) last_dp >>= 1;
+            if( last_dp < 0 ) ++last_dp;
+            dp = last_dp;
+         }
          last_dp = dp;                               // print value before changed for sideband and bfo
          if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
          else dp -= bfo;
@@ -546,9 +552,7 @@ int dp;
           if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
               si5351.SendPLLBRegisterBulk();
               else ++overs;                     //  Out of time, count skipped I2C transactions
-      }
-      //else last_dp = 0;   // !!! testing   
-           
+      }       
 
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
@@ -562,7 +566,7 @@ int dp;
    int u = 0;
    if( eer_count == 0 ){
       c = MagPhase.read_count();
-      temp_count = c;               // !!! debug
+      //temp_count = c;               // !!! debug
       //if( c == 64 ) ;                                      // two blocks delay is the goal
       if( c < 64-8 ) eer_time += 0.0001, ++eer_adj, ++u;     // slow down  64-8 for 1/4 1/6 versions.  76-8 for 1/5 rate.
       if( c > 64+8 ) eer_time -= 0.0001, --eer_adj, ++u;     // speed up    64-8 rates 1/4 and 1/6
@@ -815,7 +819,9 @@ void tx(){
 
        // configured TX mux probably somewhere else in menu system, for microphone or usb source         
     }
-    analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+   //analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+    analogWriteFrequency(KEYOUT,44117/4);   // try same as sample rate ( !!! the lower this goes the better it sounds currently )
+                                            // but at some point will have modulation pips
     analogWrite(KEYOUT,0);
     MagPhase.setmode(1);
     EER_timer.begin(EER_function,eer_time);
@@ -1180,7 +1186,7 @@ void button_process( int t ){
 
 // once just volume, now general use knob function
 void multi_adjust( int val ){
-const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd ", "Tone    ", "TXdrive "}; 
+const char *msg[] = {"Volume  ","RF gain ","CW det  ","SideTon ", "Key Spd ", "Tone    ", "TXdrive ", "TXphase "}; 
 float pval; 
 
    if( val == 0  ){     // first entry, clear status line
@@ -1246,6 +1252,11 @@ float pval;
         tx_drive = constrain(tx_drive,0.0,8.0);
         set_tx_source();
         pval = tx_drive;
+      break;
+      case TX_PHASE_U:
+        phase_delay += val;
+        phase_delay = constrain(phase_delay,0,7);
+        pval = phase_delay;
       break;
    }
    
@@ -2510,7 +2521,7 @@ char ts[2];
   val = constrain(val,0.0,0.99);
   
   if( ++count < 333 ) return;            // once a second for printing
-  if( DEBUG_MP ) eer_test();             //  tx testing
+  //if( DEBUG_MP ) eer_test();             //  tx testing
   count = 0;
 
   if( encoder_user != FREQ ) return;
