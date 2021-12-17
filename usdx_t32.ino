@@ -80,7 +80,8 @@
  *                  sure the following IIR filters do not get overdriven ( voice mode using microphone ).  Trying 0.98 for a value.
  *                  Add a feature to allow delaying the phase changes with respect to the amplitude changes. uSDX has a delay of 1 sample,
  *                  allow a choice of delay of up to 7 samples. Implemented tx_drive after the MagPhase calculation rather than before. 
- *                  Note: uSDX also adds a dc offset of 32 to microphone adc values and that is something we can try.
+ *                  Added some RF bypass caps and more gain to the microphone preamp and that seems to clear up much of the static hash on
+ *                  voice transmit.
  *                  
  *                 
  *                  
@@ -119,20 +120,22 @@
  *    Seconday use of long press is to turn off RIT.
  */
 
-//  Issues / to do
-//  check that the microphone preamp is in a linear region after we added the series resistor in vcc feed. 
+//  Issues / to do 
+//  On first power up the Si5351 phasing is not correct and one needs to change the mode or band before it is corrected.
+//      Perhaps PLL reset is skipped?  Should a proper Si5351 initialization be done as outlined in the datasheet?
 //  C4 C7 - does adding them cause processor noise in the front end.  They are currently uninstalled. 
 //  Measure audio image response, and alias images at +-44k away.
 //  Cut Vusb etch on the Teensy.
 //  Cap touch keyer/ptt inputs wired.
-//  Dit Dah and PTT seem to be mixed up.  Wiring error or code error?  ( PTT is on Dah, expected it on Dit ).
 //  Investigate the filter method used in usdx code for the morse decode signal level. Exponential averaging?
-//  Voice transmit with a microphone sounds terrible.  FT8 using USB audio however works great. 
+//  Check if on frequency, may be about 20hz high on 14 mhz TX. ( or maybe both radios used needed to warm up some ). 
 //
 //  If a PC is used as a microphone driving the transmitter in USB mode and the PC microphone volume is at max, the program hangs when
 //     returning to rx mode.  Seems to be when the AGC is releasing.
 //     This is accomplished by using the PC feature "listen to this device" with microphone in and Teensy USB out.
-//     This was a transmit test and not how the radio would normally be used.   Note: save this text. 
+//     This fault was during a transmit test and not how the radio would normally be used.
+//     Have reduced some gains below 1.0 in the transmit audio path as a potential fix.
+//     Is there an OLED write that is not suppressed with the transmitting variable if statements?  That would cause a hang. 
 //
  
  // QCX pin definitions mega328 to Teensy 3.2
@@ -181,11 +184,7 @@
 #define USE_LCD
 
                                       
-#define DEBUG_MP  1                  // !!!  Think will delete this eventually and remove all the if statements it causes in the code
-                                     // There is a testing anomally where if the PWM on KEYOUT is enabled and the Teensy powered over
-                                     // usb and the radio not powered, the radio gets 4 volts and there is feedback in the rx to mic
-                                     // circuits. Will that happen when the radio is powered?  DEBUG_MP set to 1 disables the PWM and
-                                     // feedback not present and serial prints active - this is a testing mode. 
+#define DEBUG_MP  0                  // This is for testing the EER transmitter, and printing to arduino plotter. 
                               
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
@@ -335,8 +334,8 @@ float agc_sig = 0.3;           // made global so can set it after tx and have rx
 int attn2;                     // attenuator using T/R switch, very large decrease in volume
 int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
-float tx_drive = 6.0;          // probably best to adjust USBc drive with the computer
-                               // and use this for the microphone and sidetone testing tx level
+float tx_drive = 4.0;          // probably best to adjust USBc drive with the computer
+                               // and use this for the microphone level only
 int phase_delay = 4;           // sample delay between modulation change and phase change, 0 to 7                               
 
 
@@ -357,7 +356,7 @@ int key_swap = 1;              // jack wired with tip = DAH, needs swap from mos
 /******************************** Teensy Audio Library **********************************/ 
 
 #include <Audio.h>
-//#include <Wire.h>
+//#include <Wire.h>             // edits have been made to audio library to use i2c_t3 instead of wire library. See version notes above. 
 //#include <SPI.h>
 //#include <SD.h>
 //#include <SerialFlash.h>
@@ -805,27 +804,27 @@ void tx(){
   delay(1);                                // delay or wait for I2C done flag
   if( mode == CW ){
     pinMode(KEYOUT,OUTPUT);
-    digitalWriteFast( KEYOUT, HIGH );      //  cw practice mode done elsewhere, doesn't call this function
-                                           //  sidetone on and gated done elsewhere
+    digitalWriteFast( KEYOUT, HIGH );      //  cw practice mode done elsewhere, doesn't call this function                                           //  sidetone on and gated done elsewhere
   }
   else{
     if( tx_source == MIC ){
-       digitalWriteFast( TXAUDIO_EN, HIGH );           // write TXAUDIO_EN if using mic input
+       digitalWriteFast( TXAUDIO_EN, HIGH );           // enable tx audio through FET switch to A3 pin
        QLow.setHighpass(0,300,0.707);                  //  configure Q filter to pass tx bandwidth if using mic input
        QLow.setLowpass( 1,2800,0.51763809);
        QLow.setLowpass( 2,2800,0.70710678);
        QLow.setLowpass( 3,2800,1.9318517);
        agc2.gain(0.98);
+       analogWriteFrequency(KEYOUT,44117);     // try same as sample rate, mic amp and D/A seem to alias PWM hash
 
-       // configured TX mux probably somewhere else in menu system, for microphone or usb source         
+       // configured TX mux somewhere else in menu system, for microphone or usb source         
     }
-   //analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
-    analogWriteFrequency(KEYOUT,44117/4);   // try same as sample rate ( !!! the lower this goes the better it sounds currently )
-                                            // but at some point will have modulation pips
+    else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+    
     analogWrite(KEYOUT,0);
     MagPhase.setmode(1);
     EER_timer.begin(EER_function,eer_time);
   }
+  
   tx_status(1);                            // clear row and print headers on LCD only
   Scope2.setmode( 0 );                     // halt RX FFT
 }
