@@ -203,9 +203,15 @@ void AudioMagPhase1::update(void){
         if( rem == DRATE ){
            rem = 0;  
 
-           process_hilbert( *dat1 );                           // get val1 and val2            
-           mag[count] = fastAM2( val1, val2);
-           ph[count]  =  arctan3( val1, val2 );
+           if( mode == 1 ){                                       // SSB DATA mode
+              process_hilbert( *dat1 );                           // get val1 and val2            
+              mag[count] = fastAM2( val1, val2);
+              ph[count]  =  arctan3( val1, val2 );
+           }
+           else{                                                  // AM DSB modes
+              mag[count] = *dat1;                                 // save just the plain audio signal
+              ph[count] = 0;                                      // no phase changes
+           }
            ++count;    count &=  (AUDIO_BLOCK_SAMPLES-1);     // assume power of two block size ( currently 128 )
         }
         dat1 += 1;                                              

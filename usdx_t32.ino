@@ -81,7 +81,8 @@
  *                  Add a feature to allow delaying the phase changes with respect to the amplitude changes. uSDX has a delay of 1 sample,
  *                  allow a choice of delay of up to 7 samples. Implemented tx_drive after the MagPhase calculation rather than before. 
  *                  Added some RF bypass caps and more gain to the microphone preamp and that seems to clear up much of the static hash on
- *                  voice transmit.
+ *                  voice transmit.  Ending this version with SSB voice not working well and the EER function in a state of flux.
+ *    Version 1.55
  *                  
  *                 
  *                  
@@ -90,7 +91,7 @@
  *             
  */
 
-#define VERSION 1.54
+#define VERSION 1.55
 
 // Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
 // Mic should have Mic on Tip, PTT on Ring for this radio.
@@ -336,7 +337,7 @@ int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
 float tx_drive = 4.0;          // probably best to adjust USBc drive with the computer
                                // and use this for the microphone level only
-int phase_delay = 4;           // sample delay between modulation change and phase change, 0 to 7                               
+int phase_delay = 2;           // sample delay between modulation change and phase change, 0 to 7                               
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -473,6 +474,7 @@ SI5351 si5351;                 // maybe it should be done this way.
 #define _UA (44117/DRATE)            // match definition in MagPhase.cpp
 
 int eer_count;
+int eer_mode;
 //int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
 int overs;               // I2C not ready for the next set of register data
@@ -481,6 +483,8 @@ int saves;               // short write bulk
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 // float eer_time = 113.335;   // 1/5 rate
 
+//  !!! if this works ok, then re-write this function, call a separate function for eer_mode = 2
+//  !!! it is not very clear this way.
 void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
 static int prev_phase;
@@ -490,6 +494,7 @@ static int din;          // delay index
 int phase_;
 int mag;
 int dp;
+static int mod;
 
    if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data( more now with 1/6 sample rate )
       eer_count = 0;
@@ -499,27 +504,40 @@ int dp;
    // process Mag and Phase
 
    mag = MagPhase.mvalue(eer_count);
-   if( mode == DIGI ){
-       rav_mag = 27853 * rav_mag + 4915 * mag;
-       rav_mag >>= 15;
-       mag = rav_mag;
-   }
-   else if( tx_source == MIC ){             // implement tx drive feature for voice mode only
+   if( tx_source == MIC ){                  // implement tx drive feature for voice mode only
        mag = (float)mag * tx_drive;
    }
+
+   if( mode == DIGI ){
+      rav_mag = 27853 * rav_mag + 4915 * mag;
+      rav_mag >>= 15;
+      mag = rav_mag;
+   }
+       
    // will start with 10 bits, test if over 1024, write PWM pin for KEY_OUT.
    mag >>= 5;
+   
+   if( eer_mode == 2 ){                                // controlled carrier AM 
+      mag >>= 1;
+      if( (rav_mag + mag) < 0 ) rav_mag = abs(mag);
+      rav_mag = constrain(rav_mag,0,512);
+      ++mod;
+      mod &= 31;
+      if( mod == 0 ) --rav_mag;
+      mag = mag + rav_mag;
+   }
    mag = constrain(mag,0,1024);
    magp = mag;
-   //if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
-   analogWrite( KEYOUT, mag );
+   if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
+   //analogWrite( KEYOUT, mag );
 
    // when signal level is low, phase gets very noisy
    phase_ = MagPhase.pvalue(eer_count);
    dp = phase_ - prev_phase;
    prev_phase = phase_;
    php = phase_ ;                        // !!! testing printing phase
-   
+
+      // dp will be zero for eer_mode == 2.  All of this processing not really needed but will result in a constant carrier anyway
       // removed scaling dp, instead have _UA same as sample rate
       if( dp < -200 ) dp = dp + _UA;                 // allow some audio image to transmit, avoid large positive spikes when not crossing
                                                      // quadrants in arctan ( large negative spike has _UA added )
@@ -531,26 +549,29 @@ int dp;
          din &= 7;
       }
                                                      
-      if( dp < 3100 /*&& mag > 40 */){             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
-         if( mag < 40 ){                           // leak toward zero, use last_dp
+      if( dp < 3200 ){                             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
+         if( mag < 40 && eer_mode == 1 ){          // leak toward zero, use last_dp
             if( last_dp > 0 ) last_dp >>= 1;
             if( last_dp < 0 ) ++last_dp;
             dp = last_dp;
          }
          last_dp = dp;                               // print value before changed for sideband and bfo
          if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
-         else dp -= bfo;
+         else if( mode != AM ) dp -= bfo;            // USB and DIGI
          if( mode == DIGI ){                         // filter the phase results, good idea or not?
             rav_df = 27853 * rav_df + 4940 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
             rav_df >>= 15;
            // if( DEBUG_MP == 0 ) dp = rav_df;       // see the difference on serial plotter, else use new value
             dp = rav_df;                             // see the difference on scope dummy load when self testing tx.   
          }
-       
-          si5351.freq_calc_fast(dp);
-          if( Wire.done() )                    // crash all:  can't wait for I2C while in ISR
-              si5351.SendPLLBRegisterBulk();
-              else ++overs;                     //  Out of time, count skipped I2C transactions
+         if( mode == AM ) dp = -2500;                // our AM offset on rx is 2500
+
+         if( eer_mode == 1 || eer_count == 0 ){      // write constant carrier modes only when eer_count is zero
+            si5351.freq_calc_fast(dp);
+            if( Wire.done() )                        // crash all:  can't wait for I2C while in ISR
+               si5351.SendPLLBRegisterBulk();
+            else ++overs;                            //  Out of time, count skipped I2C transactions
+         }
       }       
 
    ++eer_count;
@@ -581,14 +602,14 @@ int dp;
     if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
        static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
        ++mod;
-       if(  mod > 0 && mod < 50 /*||  trigger_ */){
+       if(  mod > 0 && mod < 100 /*||  trigger_ */){
           Serial.print( last_dp );  Serial.write(' ');     //  testing, get a small slice of data
   //        Serial.print( rav_df );  Serial.write(' ');
   //        //Serial.print( php ); Serial.write(' ');
           Serial.print( magp );
           Serial.println(); 
        }
-       if( mod > 20000 ) mod = 0;
+       if( mod > 2000 ) mod = 0;
     }
 
 }
@@ -788,7 +809,7 @@ void set_Weaver_bandwidth(int bandwidth){
 
 void tx(){
   // what needs to change to enter tx mode
-  if( mode == AM ) return;                 // should we bother with AM transmit?  Maybe if radio covered 10 meters. 
+  // if( mode == AM ) return;                 // should we bother with AM transmit?  Maybe if radio covered 10 meters. 
 
   pinMode(RX, OUTPUT );
   digitalWriteFast( RX, LOW );
@@ -809,7 +830,7 @@ void tx(){
   else{
     if( tx_source == MIC ){
        digitalWriteFast( TXAUDIO_EN, HIGH );           // enable tx audio through FET switch to A3 pin
-       QLow.setHighpass(0,300,0.707);                  //  configure Q filter to pass tx bandwidth if using mic input
+       QLow.setHighpass( 0,300,0.707 );                  //  configure Q filter to pass tx bandwidth if using mic input
        QLow.setLowpass( 1,2800,0.51763809);
        QLow.setLowpass( 2,2800,0.70710678);
        QLow.setLowpass( 3,2800,1.9318517);
@@ -821,7 +842,8 @@ void tx(){
     else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
     
     analogWrite(KEYOUT,0);
-    MagPhase.setmode(1);
+    eer_mode = ( tx_source == MIC || mode == AM ) ? 2 : 1;     // 2 = AM or DSB controlled carrier voice ,  1 = DIGI with USB audio
+    MagPhase.setmode(eer_mode);
     EER_timer.begin(EER_function,eer_time);
   }
   
@@ -1421,11 +1443,11 @@ void info_headers(){    // print the information headers one time
     LCD.clrRow(5);
     LCD.gotoRowCol(4,0);
     LCD.puts((char *)"cpu ");      // getting tired of ISO C++ forbidden warning
-    LCD.gotoRowCol(4,50);
+    LCD.gotoRowCol(4,47);
     LCD.puts((char *)"A/D ");
     LCD.gotoRowCol(5,0);
     LCD.puts((char *)"BW ");
-    LCD.gotoRowCol(5,50);
+    LCD.gotoRowCol(5,47);
     LCD.puts((char *)"TSrc");
   #endif
 
@@ -2533,13 +2555,13 @@ char ts[2];
   ts[1] = 0;
 
   #ifdef USE_LCD
-    LCD.printNumI( (int)100*val,RIGHT,ROW4);
+    LCD.printNumI( (int)100*val,RIGHT,ROW4,2,' ');
     LCD.printNumI( AudioProcessorUsage(),3*6,ROW4,3,' ');   // 0 to 100 percent
     LCD.print(bandwidth_menu.choice[filter],3*6,ROW5);
     LCD.print(ts,RIGHT,ROW5);
   #endif
   #ifdef USE_OLED
-    OLD.printNumI( (int)100*val,RIGHT,ROW4);
+    OLD.printNumI( (int)100*val,RIGHT,ROW4,2,' ');
     OLD.printNumI( AudioProcessorUsage(),3*6,ROW4,3,' ');   // 0 to 100 percent.  More debug
     OLD.print(bandwidth_menu.choice[filter],3*6,ROW6);
     OLD.print(ts,RIGHT,ROW6);
