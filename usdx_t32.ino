@@ -27,24 +27,24 @@
  *                  This required changing the 7 audio library .ccp control files to use i2c_t3 instead of Wire to correct link errors.
  *                  A Teensyduino update will remove these changes ( duplicate wire definitions result ).  Also edited i2c_t3.h to
  *                  allow only 1 I2C bus to run.  This is a user option as noted in the file.
- *    Version 1.37  Added a Audio Library object for an AM decoder as an exercise in learning how to add a custom audio object.              
+ *    Version 1.37  Added a Audio Library object for an AM decoder as an exercise in learning how to add a custom audio object.
  *    Version 1.38  Added Hilberts for AM decoding, Tx magnitude and phase, and FFT analysis.  Some redundant elements in design now.
  *                  Removed the AM decoder Library object test.  Added AM detector at about 11k IF frequency.  Hilberts are multi
  *                  purpose. Can have only one of TX, FFT, AM running at any one time as each will need different filters.
  *    Version 1.39  Continuing with a Hilbert only version. Having issues with I and Q out of sync it seems.  No decode of SSB 
  *                  unless move some patchcords around or remove objects.  Rectify object was misbehaving. Updated my
  *                  Teensyduino install to fix.
- *    Version 1.40  Wrote MagPhase object to extract data from the Audio library stream to use for transmitting.  Set _UA at             
+ *    Version 1.40  Wrote MagPhase object to extract data from the Audio library stream to use for transmitting.  Set _UA at
  *                  44117/8 for initial testing.
- *    Version 1.41  I2C did not support sample rate 1/4 of 44k ( 11k ) for TX.  Changed MagPhase to use 1/6 rate or  7352. It does           
+ *    Version 1.41  I2C did not support sample rate 1/4 of 44k ( 11k ) for TX.  Changed MagPhase to use 1/6 rate or  7352. It does
  *                  not divide evenly into 128 size buffer, but seems to be working ok.
  *    Version 1.42  Added another custom audio block ( SSB_AM ) to process receive signals at 1/4 rate with classic Hilbert. 
- *                  The upsample/filter seems to lose quite a bit of audio power.  Adjusted agc, and more volume is required.   
- *    Version 1.43  Replaced the FIR filters with Bi-quad and changed SSB_AM to run at 1/3 rate ( 1/3 of 44117 ).  Forming the           
+ *                  The upsample/filter seems to lose quite a bit of audio power.  Adjusted agc, and more volume is required.
+ *    Version 1.43  Replaced the FIR filters with Bi-quad and changed SSB_AM to run at 1/3 rate ( 1/3 of 44117 ).  Forming the
  *                  opinion that Hilberts do not work well at baseband with a high sample rate.
  *    Version 1.44  Since the RX hilberts could not be used for transmitting, returning to the Weaver receive method. The custom
  *                  audio object SSB_AM is no longer needed.  No AM mode for now.
- *    Version 1.45  Added an AM detector.  Double reset the Si5351 on band/mode changes as sometimes it seems out of sync.  Think              
+ *    Version 1.45  Added an AM detector.  Double reset the Si5351 on band/mode changes as sometimes it seems out of sync.  Think
  *                  this issue started when I added the dividers to the bandstack ( to run the Si5351 in spec for bands other than 80). 
  *    Version 1.46  CAT control using Argonaut V emulation.  Added USA band limits indication.  Made some changes to MagPhase, phase
  *                  may or may not be better, magnitude is better. Added CW decoder. Added Digi mode that filters magnitude and phase
@@ -59,9 +59,9 @@
  *                  a separate file. Added a BandWidth object for CW but signals for all modes pass through it, so the Weaver lowpass
  *                  filters are set as a roofing type filter and the new Bandwidth object is used for the final bandwidth control.
  *                  Added a tone control that changes the Q of the Bandwidth object to vary the tone.
- *    Version 1.51  Adding a gain of 10 in front of the CW tone detect object greatly improved the CW decoder.  Added a test to just            
+ *    Version 1.51  Adding a gain of 10 in front of the CW tone detect object greatly improved the CW decoder.  Added a test to just
  *                  load 4 registers in SendPLLBRegisterBulk when register 3 was the same as last time. 
- *    Version 1.52  Using a Goertzel filter as a simple FFT scope.  Seems to work ok although update rate is slow.  Cleaned up some of       
+ *    Version 1.52  Using a Goertzel filter as a simple FFT scope.  Seems to work ok although update rate is slow.  Cleaned up some of
  *                  the old code that was commented out as we seem to have settled upon a design.  For DIGI mode, increased Weaver
  *                  bandwidth to put the hole in the audio at 3000 hz. Cut in some low pass filters for other bands in series with the
  *                  17 meter lowpass.  Noticed I now get some interference lines on the WSJT waterfall.  Removed the alternate low pass
@@ -75,7 +75,7 @@
  *                  the 10uf caps changed to 1uf.  Decided to move the microphone to the CAT jack, and wired the Teensy version separate 
  *                  from the original uSDX design with the microphone and paddle using the same jack.  Worked on the magnitude and phase
  *                  some more attempting to suppress spikes in phase when amplitude is low.  Mic Tx audio is terrible at this point.
- *    Version 1.54  Reducing USB audio gain below 1.0 as a potential fix for strange program hangup. ( voice audio on USB with max PC                
+ *    Version 1.54  Reducing USB audio gain below 1.0 as a potential fix for strange program hangup. ( voice audio on USB with max PC
  *                  microphone volume.  Doesn't hang when PC microphone volume is less than 100 )  Reducing agc1 volume below 1.0 to make 
  *                  sure the following IIR filters do not get overdriven ( voice mode using microphone ).  Trying 0.98 for a value.
  *                  Add a feature to allow delaying the phase changes with respect to the amplitude changes. uSDX has a delay of 1 sample,
@@ -84,7 +84,9 @@
  *                  voice transmit.  Ending this version with SSB voice not working well and the EER function in a state of flux.
  *                  Added AM transmit. 
  *    Version 1.55  Added 15, 12, and 10 meters to the band selection.  Added cross modes UDSB and LDSB where the receiver works on SSB
- *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  
+ *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  Re-wrote the EER function separating
+ *                  out the different versions of transmit logic into their own functions. Redundant but should be easier to experiment without
+ *                  breaking something that works. 
  *                  
  *                 
  *                  
@@ -492,96 +494,58 @@ int overs;               // I2C not ready for the next set of register data
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 // float eer_time = 113.335;   // 1/5 rate
 
-//  !!!  re-write this function, call a separate function for eer_modes 1 and 2.  Logic is not clear now. 
+struct EER {
+    int32_t m;           // in mag and phase
+    int32_t p;
+    int32_t mag;         // out mag and delta phase
+    int32_t dp;
+};
+ 
 void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
-static int prev_phase;
+// static int prev_phase;
 static int last_dp;
-static int dline[8];     // phase change delay
-static int din;          // delay index
-int phase_;
+// static int dline[8];     // phase change delay
+// static int din;          // delay index
+// int phase_;
 int mag;
 int dp;
-static int mod;
+//static int mod;
+struct EER e;
 
    if( MagPhase.available() == 0 ){       // start with 6 ms of buffered data( more now with 1/6 sample rate )
       eer_count = 0;
+      last_dp = -1;
       return;
    }
 
    // process Mag and Phase
 
-   mag = MagPhase.mvalue(eer_count);
-   if( tx_source == MIC ){                  // implement tx drive feature for voice mode only
-       mag = (float)mag * tx_drive;
-   }
-
-   if( mode == DIGI ){
-      rav_mag = 27853 * rav_mag + 4915 * mag;
-      rav_mag >>= 15;
-      mag = rav_mag;
-   }
-       
-   // will start with 10 bits, test if over 1024, write PWM pin for KEY_OUT.
-   mag >>= 5;
+   e.m = MagPhase.mvalue(eer_count);
+   e.p = MagPhase.pvalue(eer_count);
+   e.mag = 0;
+   e.dp  = 0;
    
-   if( eer_mode == 2 ){                                // controlled carrier AM 
-      mag >>= 1;
-      if( (rav_mag + mag) < 0 ) rav_mag = abs(mag);
-      rav_mag = constrain(rav_mag,0,512);
-      ++mod;
-      mod &= 15;
-      if( mod == 0 ) --rav_mag;
-      mag = mag + rav_mag;
-   }
-   mag = constrain(mag,0,1024);
+   if( tx_source == MIC ) e.m = (float)e.m * tx_drive;
+
+   if( mode == DIGI ) eer_digi( &e );
+   else if( eer_mode == 1 ) eer_ssb( &e );
+   else eer_am( &e );
+
+   mag = constrain(e.mag,0,1024);
    magp = mag;
    if( DEBUG_MP != 1 ) analogWrite( KEYOUT, mag );
-   //analogWrite( KEYOUT, mag );
 
-   // when signal level is low, phase gets very noisy
-   phase_ = MagPhase.pvalue(eer_count);
-   dp = phase_ - prev_phase;
-   prev_phase = phase_;
-   php = phase_ ;                        // !!! testing printing phase
-
-      // dp will be zero for eer_mode == 2.  All of this processing not really needed but will result in a constant carrier anyway
-      // removed scaling dp, instead have _UA same as sample rate
-      if( dp < -200 ) dp = dp + _UA;                 // allow some audio image to transmit, avoid large positive spikes when not crossing
-                                                     // quadrants in arctan ( large negative spike has _UA added )
-      // implement the delay line for voice tx, don't break the DIGI modes that are working well
-      if( tx_source == MIC ){
-         dline[din] = dp;
-         dp = dline[ (din + (8-phase_delay)) & 7 ];
-         ++din;
-         din &= 7;
-      }
-                                                     
-      if( dp < 3200 ){                             // skip sending out of tx bandwidth freq range, suppress positive spikes that get through
-         if( mag < 40 && eer_mode == 1 ){          // leak toward zero, use last_dp
-            if( last_dp > 0 ) last_dp >>= 1;
-            if( last_dp < 0 ) ++last_dp;
-            dp = last_dp;
-         }
-         last_dp = dp;                               // print value before changed for sideband and bfo
-         if( mode == LSB ) dp = -dp + bfo;           // bfo offset for weaver
-         else if( mode != AM ) dp -= bfo;            // USB and DIGI
-         if( mode == DIGI ){                         // filter the phase results, good idea or not?
-            rav_df = 27853 * rav_df + 4940 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915
-            rav_df >>= 15;
-           // if( DEBUG_MP == 0 ) dp = rav_df;       // see the difference on serial plotter, else use new value
-            dp = rav_df;                             // see the difference on scope dummy load when self testing tx.   
-         }
-         if( mode == AM ) dp = -2500;                // our AM offset on rx is 2500
-
-         if( eer_mode == 1 || eer_count == 0 ){      // write constant carrier modes only when eer_count is zero
-            si5351.freq_calc_fast(dp);
-            if( Wire.done() )                        // crash all:  can't wait for I2C while in ISR
-               si5351.SendPLLBRegisterBulk();
-            else ++overs;                            //  Out of time, count skipped I2C transactions
-         }
-      }       
-
+   dp = constrain(e.dp, -3200, 3200 );
+   if( Wire.done() ){                                        // crash all:  can't wait for I2C while in ISR
+       if( last_dp != dp ){                                  // save I2C bandwidth if same dp as last time
+          si5351.freq_calc_fast(dp);
+          si5351.SendPLLBRegisterBulk();
+          last_dp = dp;                                
+       }
+   }
+   else ++overs;                                             //  Out of time on I2C bus, count skipped I2C transactions
+ 
    ++eer_count;
    eer_count &= ( AUDIO_BLOCK_SAMPLES - 1 );
 
@@ -607,7 +571,7 @@ static int mod;
       if( u ) EER_timer.update( eer_time);
    }
 
-    if( DEBUG_MP == 1 ){                          // serial writes in an interrupt function
+    if( DEBUG_MP == 1 ){                             // serial writes in an interrupt function
        static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
        ++mod;
        if(  mod > 0 && mod < 100 /*||  trigger_ */){
@@ -620,6 +584,82 @@ static int mod;
        if( mod > 2000 ) mod = 0;
     }
 
+}
+
+
+void eer_ssb( struct EER *e ){
+static int32_t prev_phase;
+static int32_t last_dp;
+static int dline[8];     // phase change delay
+static int din;          // delay index
+int32_t mag, dp;
+
+   mag = e->mag = e->m >> 5;            // 10 bits
+
+   dp = e->p - prev_phase;
+   prev_phase = e->p;
+   php = prev_phase;                            // !!! testing variable only
+   
+   if( dp < -200 ) dp += _UA;                   // allow some audio image to transmit
+   if( dp < 3200 ){                             // avoid sending any large positive spikes that result from previous statement
+      if( mag < 40 ){                           // avoid wideband hash when no audio to transmit
+         if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
+         if( last_dp < 0 ) ++last_dp;
+         dp = last_dp;
+      }
+      last_dp = dp;
+   }
+       // implement the delay line for phasing
+   dline[din] = dp;
+   dp = dline[ (din + (8-phase_delay)) & 7 ];
+   ++din;
+   din &= 7;
+
+   if( mode == USB ) dp -= bfo;      // weaver mode offset USB
+   else dp = -dp + bfo;              // LSB 
+   e->dp = dp;
+   
+}
+
+void eer_digi( struct EER *e ){
+static int32_t rav_mag;
+static int32_t rav_dp;
+static int32_t prev_phase;
+
+   rav_mag = 27853 * rav_mag + 4915 * e->m;
+   rav_mag >>= 15;
+   e->mag = rav_mag >> 5;                // 10 bits
+
+   e->dp = e->p - prev_phase;
+   prev_phase = e->p;
+   php = prev_phase;                     // !!! testing printing phase
+   if( e->dp < 0 ) e->dp += _UA;
+
+   rav_dp = 27853 * rav_dp + 4940 * e->dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915 to be on frequency
+   rav_dp >>= 15;
+   e->dp = rav_dp - bfo;                       // weaver tx offset for USB
+  
+}
+
+void eer_am( struct EER *e ){                  // modes AM  UDSB LDSB
+static int32_t rav_mag;
+int32_t mag;
+static int mod;
+
+   e->dp = ( mode == AM ) ? -2500 : 0;         // AM was received +2500 off frequency, DSSB is on frequency
+
+   mag = e->m >> 6;                            // 1/2 signal level, when added below have 10 bits
+   
+         // controlled carrier AM 
+   if( (rav_mag + mag) < 0 ) rav_mag = abs(mag);
+   rav_mag = constrain(rav_mag,0,512);         // max carrier level is 1/2
+   ++mod;
+   mod &= 15;
+   if( mod == 0 ) --rav_mag;                   // decay carrier level
+   mag = mag + rav_mag;                        // add signal to carrier level
+   mag = constrain(mag,0,1024);
+   e->mag = mag;
+   
 }
 
 void setup() {
@@ -1001,7 +1041,7 @@ void scope_plot( float val, int off ){
 static int mode = 1;
 static int pos = 1;
 int modep, posp;
-int nextp;
+// int nextp;
 uint32_t  dat, dat2;
 uint8_t   low,mid,high;
 int col;
