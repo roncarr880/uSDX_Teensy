@@ -82,7 +82,9 @@
  *                  allow a choice of delay of up to 7 samples. Implemented tx_drive after the MagPhase calculation rather than before. 
  *                  Added some RF bypass caps and more gain to the microphone preamp and that seems to clear up much of the static hash on
  *                  voice transmit.  Ending this version with SSB voice not working well and the EER function in a state of flux.
- *    Version 1.55
+ *                  Added AM transmit. 
+ *    Version 1.55  Added 15, 12, and 10 meters to the band selection.  Added cross modes UDSB and LDSB where the receiver works on SSB
+ *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  
  *                  
  *                 
  *                  
@@ -121,7 +123,8 @@
  *    Seconday use of long press is to turn off RIT.
  */
 
-//  Issues / to do 
+//  Issues / to do
+//  Fix the cap in the mic pre-amp that I cut during testing.
 //  On first power up the Si5351 phasing is not correct and one needs to change the mode or band before it is corrected.
 //      Perhaps PLL reset is skipped?  Should a proper Si5351 initialization be done as outlined in the datasheet?
 //  C4 C7 - does adding them cause processor noise in the front end.  They are currently uninstalled. 
@@ -267,7 +270,7 @@ int multi_user;
 #define INFO 0
 #define CW_DECODE 1
 #define FFT_SCOPE 2
-int screen_user = INFO;  //!!!FFT_SCOPE;  test mic
+int screen_user = INFO;
 
 #define MIC 0
 #define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
@@ -277,6 +280,7 @@ int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out.
 #define DIT 1
 #define DAH 2
 int key_mask = DIT + DAH;       // feature to disable hardware keyer/PTT if jack is shorted upon power up.
+                                // !!! maybe not needed now as have a separate mic jack
 
 // Menus:  Long press to enter
 //   STICKY_MENU 0 :  Tap makes a selection and exits.   Double tap exits without a selection.
@@ -293,20 +297,25 @@ struct BAND_STACK{
    int fltr;
 };
 
-// "CW", "LSB", "USB", "AM", "DIGI"
+// modes
 #define CW   0
 #define LSB  1
 #define USB  2
-#define AM   3
-#define DIGI 4
+#define DIGI 3
+#define AM   4
+#define LDSB 5         // rx lower ssb, tx AM
+#define UDSB 6         // rx upper ssb, tx AM
 
-struct BAND_STACK bandstack[] = {    // index is the band
+struct BAND_STACK bandstack[] = {             // index is the band
   { LSB ,  3928000, 1000, 126, MIC,  4 },
   { USB ,  5330500,  500, 126, MIC,  5 },     // special 500 step for this band, not reachable in the normal step changes.
   { LSB ,  7163000, 1000, 100, MIC,  3 },
   { CW  , 10105000,  100,  68, USBc, 1 },
   { USB , 14100000, 1000,  54, MIC,  3 },
-  { DIGI, 18100000, 1000,  40, USBc, 3 }
+  { DIGI, 18100000, 1000,  40, USBc, 3 },
+  { USB , 21200000, 1000,  34, MIC,  3 },
+  { USB , 24930000, 1000,  30, MIC,  3 },
+  { USB , 28300000, 1000,  26, MIC,  3 }
 };
 
 uint32_t freq = 18100000L;     // probably should init these vars from the bandstack
@@ -478,13 +487,12 @@ int eer_mode;
 //int temp_count;          // !!! debug
 int eer_adj;             // !!! debug
 int overs;               // I2C not ready for the next set of register data
-int saves;               // short write bulk
+// int saves;               // short write bulk
 // float eer_time = 90.680;  //90.668;  // us for each sample deci rate 4
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
 // float eer_time = 113.335;   // 1/5 rate
 
-//  !!! if this works ok, then re-write this function, call a separate function for eer_mode = 2
-//  !!! it is not very clear this way.
+//  !!!  re-write this function, call a separate function for eer_modes 1 and 2.  Logic is not clear now. 
 void EER_function(){     // EER transmit interrupt function.  Interval timer.
 int c;
 static int prev_phase;
@@ -522,7 +530,7 @@ static int mod;
       if( (rav_mag + mag) < 0 ) rav_mag = abs(mag);
       rav_mag = constrain(rav_mag,0,512);
       ++mod;
-      mod &= 31;
+      mod &= 15;
       if( mod == 0 ) --rav_mag;
       mag = mag + rav_mag;
    }
@@ -808,8 +816,7 @@ void set_Weaver_bandwidth(int bandwidth){
 
 
 void tx(){
-  // what needs to change to enter tx mode
-  // if( mode == AM ) return;                 // should we bother with AM transmit?  Maybe if radio covered 10 meters. 
+  // what needs to change to enter tx mode 
 
   pinMode(RX, OUTPUT );
   digitalWriteFast( RX, LOW );
@@ -842,7 +849,7 @@ void tx(){
     else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
     
     analogWrite(KEYOUT,0);
-    eer_mode = ( tx_source == MIC || mode == AM ) ? 2 : 1;     // 2 = AM or DSB controlled carrier voice ,  1 = DIGI with USB audio
+    eer_mode = ( mode == AM || mode == LDSB || mode == UDSB) ? 2 : 1;     // 2 = AM or DSB controlled carrier voice 
     MagPhase.setmode(eer_mode);
     EER_timer.begin(EER_function,eer_time);
   }
@@ -866,7 +873,7 @@ void rx(){
   digitalWriteFast( KEYOUT, LOW );         // do this after timer end or it will be turned on again 
   interrupts();
   transmitting = 0;
-  saves = overs = 0;                       // reset tx status counters
+  /*saves = */ overs = 0;                       // reset tx status counters
   digitalWriteFast( TXAUDIO_EN, LOW );     // turn FET audio switch off if its on
   si5351.SendRegister(3, 0b11111111);      // disable all clocks
   #ifdef USE_LCD
@@ -1099,7 +1106,7 @@ int i;
    LCD.gotoRowCol( 5, 0 );
    for( i = 0; i < num; ++i ) LCD.putch('#');
    for( ; i < 14; ++i ) LCD.putch(' ');
-   LCD.printNumI(saves,RIGHT,ROW3);
+   //LCD.printNumI(saves,RIGHT,ROW3);
 #endif
 
    if( magp > magpmax ) magpmax = magp;     // print max mag on OLED after transmit.
@@ -1317,8 +1324,10 @@ static int cw_offset = 700;
     switch( mode ){
        case AM:  f += 2500;  break;            // tune AM off frequency to pass the carrier tone.      
        case CW:  f += cw_offset;               // no break
+       case LDSB:
        case LSB: f -= bfo;   break;
        case USB:
+       case UDSB:
        case DIGI: f += bfo;  break;
     }
 
@@ -1331,13 +1340,13 @@ static int cw_offset = 700;
 }
 
 void status_display(){
-const char modes[] = "CW LSBUSBAM DIG";
+const char modes[] = "CW LSBUSBDIGAM LDSUDS";
 char msg[4];
 char msg2[9];
 char buf[20];
 
     if( transmitting ) return;       // avoid OLED writes
-    if( mode > 4 ) return;
+    if( mode > 6 ) return;
     strncpy(msg,&modes[3*mode],3);
     if( mode == CW && cw_practice ) msg[2] = 'p';   // practice mode
     msg[3] = 0;
@@ -1395,7 +1404,7 @@ void mode_change( int to_mode ){
 
   mode = to_mode;
   //qsy( freq );                                     // redundant with weaver rx, to get phasing correct on QSD
-  if( mode == CW || mode == LSB ){
+  if( mode == CW || mode == LSB  || mode == LDSB ){
      SSB.gain(1,1.0);             // add for LSB
      SSB.gain(2,1.0);
      SSB.gain(0,0.0);
@@ -1483,10 +1492,12 @@ char r = 'X';
           }
        break;
        case 1:
-          if( mode == USB ){
+          if( mode == USB || mode == DIGI ){
              if( f == 53305 || f == 53465 || f == 53570 || f == 53715 || f == 54035 ) r = 'G';
           }
-          // !!! can add CW freq's someday
+          if( mode == CW ){
+             if( f == 53320 || f == 53480 || f == 53585 || f == 53730 || f == 54050 ) r = 'g'; 
+          }
        break;
        case 2:
           if( f >= 7000 && f <= 7300 ){
@@ -1513,6 +1524,27 @@ char r = 'X';
              if( f < 18110 ) r = 'g';
              else r = 'G';
           }
+       break;
+       case 6:
+          if( f >= 21000 && f <= 21450 ){
+             if( f < 21025 ) r = 'e';
+             else if( f < 21200 ) r = 'g';
+             else if( f < 21225 ) r = 'E';
+             else if( f < 21275 ) r = 'A';
+             else r = 'G';
+          }
+       break;
+       case 7:
+         if( f >= 24890 && f <= 24990 ){
+            if( f < 24930 ) r = 'g';
+            else r = 'G';
+         }
+       break;
+       case 8:
+         if( f >= 28000 && f <= 29700 ){
+            if( f < 28300 ) r = 'g';
+            else r = 'G';
+         }
        break;
    }
 
@@ -1639,13 +1671,13 @@ int sw;
 
  // check if need a band change before changing frequency from CAT control
 void cat_qsy( int32_t f ){
-const int32_t band_breaks[6] = { 4500000,6500000,8500000,13000000,15500000,22500000 };
+const int32_t band_breaks[9] = { 4500000,6500000,8500000,12500000,15500000,19500000,23000000,26000000,33000000 };
 int  i;
 
-   for( i = 0; i < 6; ++i ){
+   for( i = 0; i < 9; ++i ){
       if( f < band_breaks[i] ) break;
    }
-   if( i == 6 ) i = 5;                   // tuned way above 17 meter filter in this radio
+   if( i > 8 ) i = 8;
    if( i != band ){
       band_change( i );
       status_display();
@@ -1789,7 +1821,7 @@ int len, i;
     case 'W':          /* receive bandwidth */
        stage(30);
     break;
-    case 'M':          /* mode. 11 is USB USB  ( 3 is CW ) vfo A, vfo B */
+    case 'M':          /* mode. 11 is USB USB  ( 3 is CW ) vfo A, vfo B */  // !!! this needs work now with new DSB modes
       i = ( mode ^ 3 ) + '0';                            // see if this works, untangle modes differences mine to Argo V
       if( i == 7 ) i = 1;                                // change DIGI to USB
       stage(i); stage(i);
@@ -2312,20 +2344,20 @@ static int row = 4, col = 0;
 struct MENU {
   const int no_sel;                 // number of selections
   const char title[15];             // top line - 14 char max in title
-  const char choice[8][9];          // selections to display - max 8 selections - max text length is 8
+  const char choice[9][9];          // selections to display - max 9 selections - max text length is 8
 };
 
 struct MENU mode_menu = {
-   5,
+   7,
    "Select Mode",
-   { "CW", "LSB", "USB", "AM", "DIGI" }          
+   { "CW", "LSB", "USB", "DIGI", "AM", "LDSB", "UDSB"}          
 };
 
 
 struct MENU band_menu = {
-   6,
+   9,
    "Amateur Band",
-   {"80", "60", "40", "30", "20", "17" }
+   {"80", "60", "40", "30", "20", "17", "15", "12", "10" }
 };
 
 struct MENU bandwidth_menu = {

@@ -21,7 +21,7 @@ extern void i2start( unsigned char c );
 extern void i2send( unsigned int data );
 extern void i2stop( );
 extern int rit_enabled;
-extern int saves;
+//extern int saves;
 
 //  The Si5351 code
 class SI5351 {
@@ -74,7 +74,7 @@ public:
   static uint8_t last_reg3;
 
     if( last_reg3 == pll_regs[3] ){
-       ++saves;
+       //++saves;
        i2start( SI5351_ADDR );         //i2c.start();
        i2send( 26+1*8 + 4 );           //i2c.SendByte(26+1*8 + 3);  // Write to PLLB
        i2send( pll_regs[4]);           //i2c.SendByte(pll_regs[4]);
