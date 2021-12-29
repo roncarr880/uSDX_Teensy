@@ -85,7 +85,7 @@
  *                  Added AM transmit. 
  *    Version 1.55  Added 15, 12, and 10 meters to the band selection.  Added cross modes UDSB and LDSB where the receiver works on SSB
  *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  Re-wrote the EER function separating
- *                  out the different versions of transmit logic into their own functions. Redundant but should be easier to experiment without
+ *                  out the different versions of transmit logic into their own functions. It should be easier to experiment without
  *                  breaking something that works. 
  *                  
  *                 
@@ -190,7 +190,8 @@
 #define USE_LCD
 
                                       
-#define DEBUG_MP  0                  // This is for testing the EER transmitter, and printing to arduino plotter. 
+#define DEBUG_MP  0                  // This is for testing the EER transmitter, and printing to arduino plotter.  Set 0 for normal use.
+//#define TWO_TONE_TEST                // comment this out for normal use
                               
 
 // Nokia library uses soft SPI as the D/C pin needs to be held during data transfer.
@@ -303,7 +304,7 @@ struct BAND_STACK{
 #define CW   0
 #define LSB  1
 #define USB  2
-#define DIGI 3
+#define DIGI 3         // single tone slow baud rate mode, FT8, wspr, etc
 #define AM   4
 #define LDSB 5         // rx lower ssb, tx AM
 #define UDSB 6         // rx upper ssb, tx AM
@@ -368,7 +369,7 @@ int key_swap = 1;              // jack wired with tip = DAH, needs swap from mos
 /******************************** Teensy Audio Library **********************************/ 
 
 #include <Audio.h>
-//#include <Wire.h>             // edits have been made to audio library to use i2c_t3 instead of wire library. See version notes above. 
+//#include <Wire.h>             // edits have been made to audio library to use i2c_t3 instead of wire library. See version notes above.
 //#include <SPI.h>
 //#include <SD.h>
 //#include <SerialFlash.h>
@@ -404,6 +405,10 @@ AudioAmplifier           amp1;           //xy=1060,202
 AudioOutputAnalog        dac1;           //xy=1097.190330505371,250.61907577514648
 AudioAnalyzeToneDetect   CWdet;          //xy=1104.7025146484375,139.3571014404297
 AudioOutputUSB           usb1;           //xy=1118.6191940307617,313.61904525756836
+#ifdef TWO_TONE_TEST
+  AudioSynthWaveformSine   SideTone2;
+  AudioConnection          patchCord34(SideTone2, 0, TxSelect, 3);
+#endif 
 AudioConnection          patchCord1(adcs1, 0, peak1, 0);
 AudioConnection          patchCord2(adcs1, 0, agc1, 0);
 AudioConnection          patchCord3(adcs1, 0, Scope2, 0);
@@ -574,7 +579,7 @@ struct EER e;
     if( DEBUG_MP == 1 ){                             // serial writes in an interrupt function
        static int mod;                               // may cause other unintended issues.  Loss of sync maybe. 
        ++mod;
-       if(  mod > 0 && mod < 100 /*||  trigger_ */){
+       if(  mod > 0 && mod < 50 /*||  trigger_ */){
           Serial.print( last_dp );  Serial.write(' ');     //  testing, get a small slice of data
   //        Serial.print( rav_df );  Serial.write(' ');
   //        //Serial.print( php ); Serial.write(' ');
@@ -603,12 +608,16 @@ int32_t mag, dp;
    if( dp < -200 ) dp += _UA;                   // allow some audio image to transmit
    if( dp < 3200 ){                             // avoid sending any large positive spikes that result from previous statement
       if( mag < 40 ){                           // avoid wideband hash when no audio to transmit
-         if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
-         if( last_dp < 0 ) ++last_dp;
+      //   if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
+      //   if( last_dp < 0 ) ++last_dp;
+         if( last_dp > 1500+10 ) last_dp -= 10;  // move toward mid range so ready for both high and low freq change
+         if( last_dp < 1500-10 ) last_dp += 10; 
          dp = last_dp;
       }
       last_dp = dp;
    }
+   else dp = last_dp;                           // avoid large spikes that get through
+   
        // implement the delay line for phasing
    dline[din] = dp;
    dp = dline[ (din + (8-phase_delay)) & 7 ];
@@ -625,20 +634,22 @@ void eer_digi( struct EER *e ){
 static int32_t rav_mag;
 static int32_t rav_dp;
 static int32_t prev_phase;
+int dp;
 
    rav_mag = 27853 * rav_mag + 4915 * e->m;
    rav_mag >>= 15;
    e->mag = rav_mag >> 5;                // 10 bits
-
-   e->dp = e->p - prev_phase;
+ 
+   dp = e->p - prev_phase;
    prev_phase = e->p;
    php = prev_phase;                     // !!! testing printing phase
-   if( e->dp < 0 ) e->dp += _UA;
+   if( dp < 0 ) dp += _UA;
+   if( dp > 3200 ) dp = rav_dp;
 
-   rav_dp = 27853 * rav_dp + 4940 * e->dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915 to be on frequency
+   rav_dp = 27853 * rav_dp + 4940 * dp;     // r/c time constant recursive filter .85 .15, increased gain from 4915 to be on frequency
    rav_dp >>= 15;
    e->dp = rav_dp - bfo;                       // weaver tx offset for USB
-  
+ 
 }
 
 void eer_am( struct EER *e ){                  // modes AM  UDSB LDSB
@@ -646,7 +657,9 @@ static int32_t rav_mag;
 int32_t mag;
 static int mod;
 
-   e->dp = ( mode == AM ) ? -2500 : 0;         // AM was received +2500 off frequency, DSSB is on frequency
+   if( mode == AM ) e->dp = -2500;             // AM was received +2500 off frequency
+   else if( mode == UDSB ) e->dp = -bfo;       // Listen USB, tx AM
+   else e->dp = bfo;                           // Listen LSB, tx AM
 
    mag = e->m >> 6;                            // 1/2 signal level, when added below have 10 bits
    
@@ -872,7 +885,8 @@ void tx(){
   delay(1);                                // delay or wait for I2C done flag
   if( mode == CW ){
     pinMode(KEYOUT,OUTPUT);
-    digitalWriteFast( KEYOUT, HIGH );      //  cw practice mode done elsewhere, doesn't call this function                                           //  sidetone on and gated done elsewhere
+    digitalWriteFast( KEYOUT, HIGH );      //  cw practice mode done elsewhere, doesn't call this function
+                                           //  sidetone on and gated done elsewhere
   }
   else{
     if( tx_source == MIC ){
@@ -1160,7 +1174,7 @@ static int sec;
 static int freq = 700;
 float amp;
 
-return;
+  // return;   
   // Serial.print(sec);   Serial.write(' ');
   // Serial.print(eer_adj); Serial.write(' ');
   // Serial.print(temp_count); Serial.write(' ');
@@ -1169,6 +1183,14 @@ return;
    if( tx_source != SIDETONE ){
       tx_source = SIDETONE;
       set_tx_source();
+      SideTone.frequency( 700 );
+      #ifdef TWO_TONE_TEST
+        SideTone.amplitude(0.45);
+        SideTone2.frequency( 1300 );
+        SideTone2.amplitude(0.45);
+        TxSelect.gain(3,0.98);
+        mode_change( AM );
+      #endif
    }
    LCD.printNumF(eer_time,5,0,ROW3);
 
@@ -1179,10 +1201,12 @@ return;
    ++sec;
   // trigger_ = 1;
   // delay(5);                           // these delays need to be longer than expected to capture edges
-   freq = ( sec & 1 ) ? 1200 : 2100;
-   amp  = ( sec & 1 ) ? 0.4 : 0.85;
-   SideTone.frequency(freq);
-   SideTone.amplitude(amp);
+   #ifndef TWO_TONE_TEST
+     freq = ( sec & 1 ) ? 300 : 3100;
+     amp  = ( sec & 1 ) ? 0.4 : 0.85;
+     SideTone.frequency(freq);
+     SideTone.amplitude(amp);
+   #endif  
   // delay(20);                          // especially this one
   // trigger_ = 0;
    
@@ -2037,7 +2061,7 @@ int pdl;
 
 #define WEIGHT 200        // extra weight for keyed element
 
-void keyer( ){
+void keyer( ){            // this function is called once every millisecond
 static int state;
 static int count;
 static int cel;           // current element
@@ -2614,7 +2638,7 @@ char ts[2];
   val = constrain(val,0.0,0.99);
   
   if( ++count < 333 ) return;            // once a second for printing
-  //if( DEBUG_MP ) eer_test();             //  tx testing
+  if( DEBUG_MP ) eer_test();             //  tx testing using sidetone
   count = 0;
 
   if( encoder_user != FREQ ) return;
