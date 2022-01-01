@@ -152,7 +152,7 @@ int i;
 // a 31 tap classic hilbert every other constant is zero, kaiser window
 static void process_hilbert( int16_t val ){
 static int32_t wi[31];                                // delay terms
-static int32_t wq[31];
+// static int32_t wq[31];                             // extra redundant array
 const int32_t k0 = (int32_t)( 32767.5 * 0.002972769320862211 );
 const int32_t k1 = (int32_t)( 32767.5 * 0.008171666650726522 );
 const int32_t k2 = (int32_t)( 32767.5 * 0.017465643081957562 );
@@ -162,10 +162,11 @@ const int32_t k5 = (int32_t)( 32767.5 * 0.101629404192315698 );
 const int32_t k6 = (int32_t)( 32767.5 * 0.195583262432201366 );
 const int32_t k7 = (int32_t)( 32767.5 * 0.629544595185021816 );
 
-   for( int i = 0; i < 30; ++i )  wi[i] = wi[i+1],  wq[i] = wq[i+1];
-   wi[30] = wq[30] = val;
+   for( int i = 0; i < 30; ++i )  wi[i] = wi[i+1];      //,  wq[i] = wq[i+1];
+   // wi[30] = wq[30] = val;
+   wi[30] = val;
 
-   val2 = wq[15];
+   val2 = wi[15];          // wq[15];
    val1 =  k0 * ( wi[0] - wi[30] ) + k1 * ( wi[2] - wi[28] ) + k2 * ( wi[4] - wi[26] ) + k3 * ( wi[6] - wi[24] );
    val1 += k4 * ( wi[8] - wi[22] ) + k5 * ( wi[10] - wi[20]) + k6 * ( wi[12] - wi[18]) + k7 * ( wi[14] - wi[16]);
    val1 >>= 15;

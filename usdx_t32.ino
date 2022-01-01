@@ -86,7 +86,7 @@
  *    Version 1.55  Added 15, 12, and 10 meters to the band selection.  Added cross modes UDSB and LDSB where the receiver works on SSB
  *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  Re-wrote the EER function separating
  *                  out the different versions of transmit logic into their own functions. It should be easier to experiment without
- *                  breaking something that works. 
+ *                  breaking something that works. Changed the modes order to match Argonaut V modes ( DIGI reports as FM in HRD program ). 
  *                  
  *                 
  *                  
@@ -283,7 +283,7 @@ int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out.
 #define DIT 1
 #define DAH 2
 int key_mask = DIT + DAH;       // feature to disable hardware keyer/PTT if jack is shorted upon power up.
-                                // !!! maybe not needed now as have a separate mic jack
+
 
 // Menus:  Long press to enter
 //   STICKY_MENU 0 :  Tap makes a selection and exits.   Double tap exits without a selection.
@@ -301,13 +301,13 @@ struct BAND_STACK{
 };
 
 // modes
-#define CW   0
-#define LSB  1
-#define USB  2
-#define DIGI 3         // single tone slow baud rate mode, FT8, wspr, etc
-#define AM   4
-#define LDSB 5         // rx lower ssb, tx AM
-#define UDSB 6         // rx upper ssb, tx AM
+#define CW   3
+#define LSB  2
+#define USB  1
+#define DIGI 4         // single tone slow baud rate mode, FT8, wspr, etc
+#define AM   0
+#define LDSB 6         // rx lower ssb, tx AM
+#define UDSB 5         // rx upper ssb, tx AM
 
 struct BAND_STACK bandstack[] = {             // index is the band
   { LSB ,  3928000, 1000, 126, MIC,  4 },
@@ -686,23 +686,18 @@ void setup() {
    pinMode( TXAUDIO_EN, OUTPUT );
    digitalWriteFast( TXAUDIO_EN, LOW );
 
-     // **** this section could be altered as desired for a electret microphone but may work as is.
-     // But AVCC would need to be wired to 3.3 volts.
-   pinMode( DAHpin, INPUT_PULLUP );         // has a 10k pullup with the microphone circuit
-                                            // but I added a jumper connection for ssb
-                                            // so this needs to be INPUT_PULLUP when in CW mode and jumper open in CW position.
-                                            // !!! it seems I failed to wire AVCC up to the development board, but that is ok as
-                                            // I plan to use a dynamic microphone and mic bias is not desired.
+     // A microphone jack and pre-amp have been added making the paddle inputs simpler than before. DAHpin no longer goes to the
+     // previous microphone circuit and no longer has a 10k pullup
+   pinMode( DAHpin, INPUT_PULLUP );   
    pinMode( DITpin, INPUT_PULLUP );
    
    delay(1);
    if( read_paddles() != 0 ){
-        key_mask = 0;                       // disable the hardware keyer and hardware PTT as it has a short ( microphone connected ? )
-        pinMode( DAHpin, INPUT );           // remove any current through the dynamic microphone
+        key_mask = 0;                       // disable the hardware keyer and hardware PTT as there is a short on the paddle jack
+        pinMode( DAHpin, INPUT );           // remove any current through whatever is connnected 
         pinMode( DITpin, INPUT );
         touch_key = 1;                      // turn on touch keyer/ptt
-   }
-     // ****
+   } 
    
    Serial.begin(1200);                   // usb serial, baud rate makes no difference.  Argo V baud rate is 1200.
 
@@ -718,8 +713,9 @@ void setup() {
    #ifdef USE_LCD
     LCD.InitLCD(contrast);
     LCD.setFont(SmallFont);
-    LCD.print((char *)("Version "),0,ROW5);    // just some junk to see on the screen
+    LCD.print((char *)("Version "),0,ROW5);
     LCD.printNumF(VERSION,2,6*8,ROW5);
+    LCD.print((char*)("MIC PDL Phones"),0,ROW0);
    #endif
 
    #ifdef USE_OLED
@@ -728,7 +724,16 @@ void setup() {
      OLD.setFont(SmallFont);
      OLD.print((char *)("Version "),0,ROW7);
      OLD.printNumF(VERSION,2,6*8,ROW7);
+     OLD.print((char*)("MIC  Paddles  Phones"),0,ROW0);
      //OLD.printNumI( Wire.getClock()/1000,0,ROW4);
+   #endif
+
+   delay( 4000 );        // jack wiring help screen will display
+   #ifdef USE_LCD
+     LCD.clrRow(0);
+   #endif
+   #ifdef USE_OLED
+     OLD.clrRow(0);
    #endif
 
    freq_display();
@@ -1404,7 +1409,7 @@ static int cw_offset = 700;
 }
 
 void status_display(){
-const char modes[] = "CW LSBUSBDIGAM LDSUDS";
+const char modes[] = "AM USBLSBCW DIGUDSLDS";
 char msg[4];
 char msg2[9];
 char buf[20];
@@ -1859,9 +1864,9 @@ unsigned long val4;
     case 'T':    /* added tuning rate as a command */
     break;
     case 'M':
-       int i = command[2] - '0';          // untangle Argo V modes and my modes
-       i &= 3;   i ^= 3;                  // make sure valid;  swap cw and am, swap usb and lsb
+       int i = command[2] - '0';          // FM will map to DIGI
        mode_change(i);
+       status_display();
     break;       
    }  /* end switch */   
 }
@@ -1885,9 +1890,10 @@ int len, i;
     case 'W':          /* receive bandwidth */
        stage(30);
     break;
-    case 'M':          /* mode. 11 is USB USB  ( 3 is CW ) vfo A, vfo B */  // !!! this needs work now with new DSB modes
-      i = ( mode ^ 3 ) + '0';                            // see if this works, untangle modes differences mine to Argo V
-      if( i == 7 ) i = 1;                                // change DIGI to USB
+    case 'M':          /* mode. 11 is USB USB  ( 3 is CW ) vfo A, vfo B */
+      i = mode;
+      if( i > 4 ) i &= 3;                          // report UDSB, LDSB as USB, LSB.  DIGI reports as FM
+      i = i + '0';
       stage(i); stage(i);
     break;
     case 'O':          /* split */   
@@ -2000,7 +2006,7 @@ int tch_dah;
    pdl += digitalReadFast( DITpin );
 
    pdl ^= 3;                                                // make logic positive
-   pdl &= key_mask;                                         // apply disable mask ( mono plug microphone is connected on powerup )
+   pdl &= key_mask;                                         // apply disable mask ( mono plug microphone is connected to wrong jack? )
    if( key_swap && mode == CW && key_mode != STRAIGHT ){    // only swap CW keyer mode. 
       pdl <<= 1;                                            // don't swap the PTT pin, DITpin, when in SSB mode
       if( pdl & 4 ) pdl += 1;                               // don't swap the CW straight mode pin DITpin
@@ -2036,12 +2042,12 @@ void side_tone_off(){
   Volume.gain(0,af_gain);
 }
 
-void ptt(){                // ssb PTT or straight key, this uses DIT input because DAH is the MIC input
+void ptt(){                // ssb PTT or straight key, this uses DIT input because DAH is the MIC input ( was once the MIC input )
 static uint32_t dbounce;
 static int txing;          // for cw practice mode to work, duplicate the transmitting variable
 int pdl;
 
-   pdl = read_paddles() & DIT;
+   pdl = read_paddles() & DIT;    // when swap is enabled this is the DAH lever on a dual key
    dbounce >>= 1;
    if( pdl ) dbounce |= 0x400;    // 8000 is 16ms delay, with 32 bits can double if needed. this will stretch key on time. 
 
@@ -2414,7 +2420,7 @@ struct MENU {
 struct MENU mode_menu = {
    7,
    "Select Mode",
-   { "CW", "LSB", "USB", "DIGI", "AM", "LDSB", "UDSB"}          
+   { "AM", "USB", "LSB", "CW", "DIGI", "UDSB", "LDSB"}          
 };
 
 

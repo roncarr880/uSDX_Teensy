@@ -25,6 +25,8 @@
  */
 
 // Async complex AM detector
+// https://www.dsprelated.com/showarticle/938.php
+// Figure 4.  Hilbert and delay not needed as we already have I and Q signals.
 
 #include <Arduino.h>
 #include "AM_decode.h"
