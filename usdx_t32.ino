@@ -409,8 +409,46 @@ AudioOutputAnalog        dac1;           //xy=1198.7142753601074,332.85712432861
 AudioOutputUSB           usb1;           //xy=1202.5714416503906,380.1428589820862
 #ifdef TWO_TONE_TEST
   AudioSynthWaveformSine   SideTone2;      //xy=483.14290618896484,555.7143478393555
-  AudioConnection          patchCord10(SideTone2, 0, TxSelect, 3);
-#endif  
+  AudioConnection          patchCord9(SideTone2, 0, TxSelect, 3);
+#endif
+AudioConnection          patchCord1(adcs1, 0, peak1, 0);
+AudioConnection          patchCord2(adcs1, 0, agc1, 0);
+AudioConnection          patchCord3(adcs1, 0, Scope2, 0);
+AudioConnection          patchCord4(adcs1, 1, agc2, 0);
+AudioConnection          patchCord5(adcs1, 1, Scope2, 3);
+AudioConnection          patchCord6(agc2, QLow);
+AudioConnection          patchCord7(agc1, ILow);
+AudioConnection          patchCord8(usb2, 0, TxSelect, 1);
+//AudioConnection          patchCord9(SideTone2, 0, TxSelect, 3);
+AudioConnection          patchCord10(QLow, 0, Q_mixer, 0);
+AudioConnection          patchCord11(QLow, 0, AMdet, 3);
+AudioConnection          patchCord12(QLow, 0, TxSelect, 0);
+AudioConnection          patchCord13(ILow, 0, I_mixer, 0);
+AudioConnection          patchCord14(ILow, 0, AMdet, 0);
+AudioConnection          patchCord15(Scope2, Scope_det1);
+AudioConnection          patchCord16(Scope2, Scope_det2);
+AudioConnection          patchCord17(Scope2, Scope_det3);
+AudioConnection          patchCord18(Scope2, Scope_det4);
+AudioConnection          patchCord19(TxSelect, TXLow);
+AudioConnection          patchCord20(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord21(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord22(Q_mixer, 0, SSB, 2);
+AudioConnection          patchCord23(AMdet, 0, SSB, 0);
+AudioConnection          patchCord24(I_mixer, 0, SSB, 1);
+AudioConnection          patchCord25(TXLow, 0, MagPhase, 0);
+AudioConnection          patchCord26(SideTone, 0, Volume, 3);
+AudioConnection          patchCord27(SideTone, 0, TxSelect, 2);
+AudioConnection          patchCord28(SSB, BandWidth);
+AudioConnection          patchCord29(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord30(BandWidth, rms1);
+AudioConnection          patchCord31(BandWidth, amp1);
+AudioConnection          patchCord32(Volume, dac1);
+AudioConnection          patchCord33(Volume, 0, usb1, 0);
+AudioConnection          patchCord34(Volume, 0, usb1, 1);
+AudioConnection          patchCord35(amp1, CWdet);
+
+
+/*  
 AudioConnection          patchCord1(adcs1, 0, peak1, 0);
 AudioConnection          patchCord2(adcs1, 0, agc1, 0);
 AudioConnection          patchCord3(adcs1, 0, Scope2, 0);
@@ -446,7 +484,7 @@ AudioConnection          patchCord33(Volume, 0, usb1, 0);
 AudioConnection          patchCord34(Volume, 0, usb1, 1);
 AudioConnection          patchCord35(amp1, CWdet);
 // GUItool: end automatically generated code
-
+*/
 /*
 // Scope added
 // GUItool: begin automatically generated code
@@ -988,7 +1026,6 @@ void tx(){
   else{
     if( tx_source == MIC ){
        digitalWriteFast( TXAUDIO_EN, HIGH );           // enable tx audio through FET switch to A3 pin
-       TXLow.begin(TXLowc,36);                         // tx bandwidth fir filter
        agc2.gain(0.98); 
        QLow.setHighpass( 0,300,0.54119610 );           //  cut dc and 60 hz hum
        QLow.setHighpass( 1,300,1.3065630);  
@@ -999,7 +1036,8 @@ void tx(){
        // configured TX mux somewhere else in menu system, for microphone or usb source         
     }
     else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
-    
+
+    TXLow.begin(TXLowc,36);                     // tx bandwidth fir filter
     analogWrite(KEYOUT,0);
     eer_mode = ( mode == AM || mode == LDSB || mode == UDSB) ? 2 : 1;     // 2 = AM or DSB controlled carrier voice 
     MagPhase.setmode(eer_mode);
@@ -1020,6 +1058,7 @@ void rx(){
   else{
     EER_timer.end();
     MagPhase.setmode(0);
+    TXLow.end();                           // turn off TX FIR filter
   }
   pinMode( KEYOUT, OUTPUT );               // either nointerrupts block or this line solved the double tx current on 2nd tx problem.
   digitalWriteFast( KEYOUT, LOW );         // do this after timer end or it will be turned on again 
@@ -1033,7 +1072,6 @@ void rx(){
      status_display();
   #endif
   set_bandwidth();                         // return Q filter bandwidth if used for tx, or just some redundant processing
-  if( tx_source == MIC ) TXLow.end();      // turn off TX FIR filter
   delay(1);                                // let the dust settle
   //pinMode( RX, INPUT );                  // use pullup to 5 volts. unless attn2 is enabled
   set_attn2();                             // use current attn2 setting for RX
