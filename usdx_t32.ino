@@ -210,6 +210,7 @@
 #include "AM_decode.h"         // the simplest complex IQ decoder that I tried
 #include "my_morse.h"          // my morse table, designed for sending but used also for receive
 #include "FFT_Scope.h"         // A simple FFT type of display using a Goertzel filter.
+#include "ParksLPF36.h"        // Transmit bandwidth filter
 
 
 
@@ -278,7 +279,7 @@ int screen_user = INFO;
 #define MIC 0
 #define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
 #define SIDETONE 2 
-int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out. 
+int tx_source = MIC;  //USBc; // starting on 17 meters FT8 with USBc audio in and out. 
 
 #define DIT 1
 #define DAH 2
@@ -321,11 +322,11 @@ struct BAND_STACK bandstack[] = {             // index is the band
   { USB , 28300000, 1000,  26, MIC,  3 }
 };
 
-uint32_t freq = 18100000L;     // probably should init these vars from the bandstack
+uint32_t freq = 18105000L;     // probably should init these vars from the bandstack
 int rit_enabled;
 int step_ = 1000;
 int band = 5;
-int mode = DIGI;
+int mode = USB;
 int filter = 4;
 int bfo;
 int magp;                      // tx drive display on the LCD only
@@ -349,7 +350,7 @@ int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
 float tx_drive = 4.0;          // probably best to adjust USBc drive with the computer
                                // and use this for the microphone level only
-int phase_delay = 2;           // sample delay between modulation change and phase change, 0 to 7                               
+int phase_delay = -1;          // sample delay between modulation change and phase change, -7 to 7
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -360,7 +361,7 @@ int phase_delay = 2;           // sample delay between modulation change and pha
 #define TOUCH_T     5          // put them in this menu as special cases to avoid more yes/no menu's
 #define KEY_SWAP    6
 int key_mode = ULTIMATIC;
-int touch_key = 0;
+int touch_key = 1;           // 0 !!!
 int cw_practice = 1;
 int key_swap = 1;              // jack wired with tip = DAH, needs swap from most of my other radio's
 
@@ -375,6 +376,78 @@ int key_swap = 1;              // jack wired with tip = DAH, needs swap from mos
 //#include <SerialFlash.h>
 
 
+// FIR transmit filter instead of BiQuads
+// GUItool: begin automatically generated code
+AudioInputAnalogStereo   adcs1;          //xy=318.5714416503906,351.1428589820862
+AudioAnalyzePeak         peak1;          //xy=428.5714416503906,211.14285898208618
+AudioAmplifier           agc2;           //xy=473.5714416503906,378.1428589820862
+AudioAmplifier           agc1;           //xy=476.5714416503906,328.1428589820862
+AudioInputUSB            usb2;           //xy=477.1428565979004,516.8571624755859
+AudioFilterFIR           TXLow;           //xy=487.1428909301758,477.14284324645996
+AudioFilterBiquad        QLow;           //xy=503.28573989868164,427.1428394317627
+AudioFilterBiquad        ILow;           //xy=513.5714416503906,275.1428589820862
+AudioFFT_Scope2          Scope2;         //xy=545.7142857142857,98.57142857142856
+AudioMixer4              TxSelect;       //xy=653.5714416503906,512.1428589820862
+AudioSynthWaveformSine   sinBFO;         //xy=657.5714416503906,374.1428589820862
+AudioSynthWaveformSine   cosBFO;         //xy=659.5714416503906,337.1428589820862
+AudioEffectMultiply      Q_mixer;        //xy=691.5714416503906,430.1428589820862
+AudioAMdecode2           AMdet;         //xy=694.2857398986816,230.00000190734863
+AudioEffectMultiply      I_mixer;        //xy=694.5714416503906,281.1428589820862
+AudioAnalyzeToneDetect   Scope_det4;     //xy=726.1427993774414,139.9999542236328
+AudioAnalyzeToneDetect   Scope_det2;     //xy=727.571403503418,71.42853736877441
+AudioAnalyzeToneDetect   Scope_det3;     //xy=727.5713348388672,105.71429061889648
+AudioAnalyzeToneDetect   Scope_det1;     //xy=728.9999542236328,38.571428298950195
+AudioSynthWaveformSine   SideTone;       //xy=848.5714416503906,414.1428589820862
+AudioMagPhase1           MagPhase;         //xy=848.5714874267578,521.4285278320312
+AudioMixer4              SSB;            //xy=864.5714416503906,345.1428589820862
+AudioFilterBiquad        BandWidth;      //xy=981.5714416503906,271.1428589820862
+AudioAnalyzeRMS          rms1;           //xy=1030.5714416503906,216.14285898208618
+AudioMixer4              Volume;         //xy=1058.5714416503906,345.1428589820862
+AudioAmplifier           amp1;           //xy=1144.5714416503906,269.1428589820862
+AudioAnalyzeToneDetect   CWdet;          //xy=1188.5714416503906,206.14285898208618
+AudioOutputAnalog        dac1;           //xy=1198.7142753601074,332.8571243286133
+AudioOutputUSB           usb1;           //xy=1202.5714416503906,380.1428589820862
+#ifdef TWO_TONE_TEST
+  AudioSynthWaveformSine   SideTone2;      //xy=483.14290618896484,555.7143478393555
+  AudioConnection          patchCord10(SideTone2, 0, TxSelect, 3);
+#endif  
+AudioConnection          patchCord1(adcs1, 0, peak1, 0);
+AudioConnection          patchCord2(adcs1, 0, agc1, 0);
+AudioConnection          patchCord3(adcs1, 0, Scope2, 0);
+AudioConnection          patchCord4(adcs1, 1, agc2, 0);
+AudioConnection          patchCord5(adcs1, 1, Scope2, 3);
+AudioConnection          patchCord6(agc2, QLow);
+AudioConnection          patchCord7(QLow, TXLow);         // was agc2 in design but need to cut 60 hz hum
+AudioConnection          patchCord8(agc1, ILow);
+AudioConnection          patchCord9(usb2, 0, TxSelect, 1);
+AudioConnection          patchCord11(TXLow, 0, TxSelect, 0);
+AudioConnection          patchCord12(QLow, 0, Q_mixer, 0);
+AudioConnection          patchCord13(QLow, 0, AMdet, 3);
+AudioConnection          patchCord14(ILow, 0, I_mixer, 0);
+AudioConnection          patchCord15(ILow, 0, AMdet, 0);
+AudioConnection          patchCord16(Scope2, Scope_det1);
+AudioConnection          patchCord17(Scope2, Scope_det2);
+AudioConnection          patchCord18(Scope2, Scope_det3);
+AudioConnection          patchCord19(Scope2, Scope_det4);
+AudioConnection          patchCord20(TxSelect, 0, MagPhase, 0);
+AudioConnection          patchCord21(sinBFO, 0, Q_mixer, 1);
+AudioConnection          patchCord22(cosBFO, 0, I_mixer, 1);
+AudioConnection          patchCord23(Q_mixer, 0, SSB, 2);
+AudioConnection          patchCord24(AMdet, 0, SSB, 0);
+AudioConnection          patchCord25(I_mixer, 0, SSB, 1);
+AudioConnection          patchCord26(SideTone, 0, Volume, 3);
+AudioConnection          patchCord27(SideTone, 0, TxSelect, 2);
+AudioConnection          patchCord28(SSB, BandWidth);
+AudioConnection          patchCord29(BandWidth, 0, Volume, 0);
+AudioConnection          patchCord30(BandWidth, rms1);
+AudioConnection          patchCord31(BandWidth, amp1);
+AudioConnection          patchCord32(Volume, dac1);
+AudioConnection          patchCord33(Volume, 0, usb1, 0);
+AudioConnection          patchCord34(Volume, 0, usb1, 1);
+AudioConnection          patchCord35(amp1, CWdet);
+// GUItool: end automatically generated code
+
+/*
 // Scope added
 // GUItool: begin automatically generated code
 AudioInputAnalogStereo   adcs1;          //xy=234.99997329711914,284.9999809265137
@@ -384,6 +457,7 @@ AudioAmplifier           agc2;           //xy=389,311.6667175292969
 AudioAmplifier           agc1;           //xy=392.8333740234375,261.33331298828125
 AudioFilterBiquad        QLow;           //xy=413.83331298828125,360.25
 AudioFilterBiquad        ILow;           //xy=429.4999694824219,208.41665649414062
+AudioFilterBiquad        TXLow;
 AudioFFT_Scope2          Scope2;         //xy=450,510
 AudioMixer4              TxSelect;       //xy=569.3333740234375,445.61907958984375
 AudioSynthWaveformSine   sinBFO;         //xy=573.083251953125,307.41668701171875
@@ -418,7 +492,9 @@ AudioConnection          patchCord6(usb2, 0, TxSelect, 1);
 AudioConnection          patchCord7(agc2, QLow);
 AudioConnection          patchCord8(agc1, ILow);
 AudioConnection          patchCord9(QLow, 0, Q_mixer, 0);
-AudioConnection          patchCord10(QLow, 0, TxSelect, 0);
+//AudioConnection          patchCord10(QLow, 0, TxSelect, 0);
+AudioConnection          patchCord10(QLow, 0, TXLow, 0);
+AudioConnection          patchCord34(TXLow,0, TxSelect,0);
 AudioConnection          patchCord11(QLow, 0, AMdet, 1);
 AudioConnection          patchCord12(ILow, 0, I_mixer, 0);
 AudioConnection          patchCord13(ILow, 0, AMdet, 0);
@@ -443,7 +519,7 @@ AudioConnection          patchCord28(Volume, 0, usb1, 0);
 AudioConnection          patchCord29(Volume, 0, usb1, 1);
 AudioConnection          patchCord30(amp1, CWdet);
 // GUItool: end automatically generated code
-
+*/
 
 // I2C functions that the OLED library expects to use.
 void i2init(){
@@ -497,7 +573,7 @@ int overs;               // I2C not ready for the next set of register data
 // int saves;               // short write bulk
 // float eer_time = 90.680;  //90.668;  // us for each sample deci rate 4
 float eer_time = 136.0;  // 1/6 rate ( 1/6 of 44117 )
-// float eer_time = 113.335;   // 1/5 rate
+//float eer_time = 113.335;   // 1/5 rate
 
 struct EER {
     int32_t m;           // in mag and phase
@@ -570,8 +646,8 @@ struct EER e;
      // leak timer toward what we think is correct
       if( eer_time > 136.01 ) eer_time -= 0.00001, ++u;   //  rate 1/6 version.    version at 1/4 rate use 90.67 to 90.68.
       if( eer_time < 135.99 ) eer_time += 0.00001, ++u;
-     // if( eer_time > 113.34 ) eer_time -= 0.00001, ++u;     // rate 1/5 version
-     // if( eer_time < 113.33 ) eer_time += 0.00001, ++u;     // use 76 +-8 as index to sync
+      //if( eer_time > 113.34 ) eer_time -= 0.00001, ++u;     // rate 1/5 version
+      //if( eer_time < 113.33 ) eer_time += 0.00001, ++u;     // use 76 +-8 as index to sync
       
       if( u ) EER_timer.update( eer_time);
    }
@@ -598,31 +674,47 @@ static int32_t last_dp;
 static int dline[8];     // phase change delay
 static int din;          // delay index
 int32_t mag, dp;
+static int rav_mag;
+static int tx_stat;
 
    mag = e->mag = e->m >> 5;            // 10 bits
+   rav_mag = 27853 * rav_mag + 4915 * e->m;
+   rav_mag >>= 15;
 
    dp = e->p - prev_phase;
    prev_phase = e->p;
    php = prev_phase;                            // !!! testing variable only
    
-   if( dp < -200 ) dp += _UA;                   // allow some audio image to transmit
+   if( dp < -300 ) dp += _UA;                   // allow some audio image to transmit, hilbert not perfect.
    if( dp < 3200 ){                             // avoid sending any large positive spikes that result from previous statement
-      if( mag < 40 ){                           // avoid wideband hash when no audio to transmit
-      //   if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
-      //   if( last_dp < 0 ) ++last_dp;
-         if( last_dp > 1500+10 ) last_dp -= 10;  // move toward mid range so ready for both high and low freq change
-         if( last_dp < 1500-10 ) last_dp += 10; 
-         dp = last_dp;
+      if( (rav_mag >> 5) < 40 ){                // avoid wideband hash when no audio to transmit 
+        // if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
+        // if( last_dp < 0 ) ++last_dp;
+        //if( last_dp > 10 ) last_dp -= 10;
+        // if( last_dp < 3000 ) last_dp += 10;
+        //dp = last_dp;
+         if( tx_stat == 1 ) --overs, tx_stat = 0, si5351.SendRegister(3, 0b11111111);      // disable clock 2
       }
-      last_dp = dp;
+      else if( tx_stat == 0 ) --overs, tx_stat = 1,  si5351.SendRegister(3, 0b11111011);      // Enable clock 2
+      // last_dp = dp;
    }
    else dp = last_dp;                           // avoid large spikes that get through
+   //else dp = 3200;
    
        // implement the delay line for phasing
-   dline[din] = dp;
-   dp = dline[ (din + (8-phase_delay)) & 7 ];
-   ++din;
-   din &= 7;
+   if( phase_delay > 0 ){
+      dline[din] = dp;
+      dp = dline[ (din + (8-phase_delay)) & 7 ];
+      ++din;
+      din &= 7;
+   }
+       // delay mag to phase
+    if( phase_delay < 0 ){
+       dline[din] = mag;
+       e->mag = dline[ (din + (8+phase_delay)) & 7];
+       ++din;
+       din &= 7;
+    }
 
    if( mode == USB ) dp -= bfo;      // weaver mode offset USB
    else dp = -dp + bfo;              // LSB 
@@ -874,7 +966,7 @@ void set_Weaver_bandwidth(int bandwidth){
 
 
 void tx(){
-  // what needs to change to enter tx mode 
+  // what needs to change to enter tx mode
 
   pinMode(RX, OUTPUT );
   digitalWriteFast( RX, LOW );
@@ -896,13 +988,14 @@ void tx(){
   else{
     if( tx_source == MIC ){
        digitalWriteFast( TXAUDIO_EN, HIGH );           // enable tx audio through FET switch to A3 pin
-       QLow.setHighpass( 0,300,0.707 );                  //  configure Q filter to pass tx bandwidth if using mic input
-       QLow.setLowpass( 1,2800,0.51763809);
-       QLow.setLowpass( 2,2800,0.70710678);
-       QLow.setLowpass( 3,2800,1.9318517);
-       agc2.gain(0.98);
-       analogWriteFrequency(KEYOUT,44117);     // try same as sample rate, mic amp and D/A seem to alias PWM hash
-
+       TXLow.begin(TXLowc,36);                         // tx bandwidth fir filter
+       agc2.gain(0.98); 
+       QLow.setHighpass( 0,300,0.54119610 );           //  cut dc and 60 hz hum
+       QLow.setHighpass( 1,300,1.3065630);  
+       QLow.setLowpass( 2,3100,0.54119610);
+       QLow.setLowpass( 3,3100,1.3065630);
+       //analogWriteFrequency(KEYOUT,44117);     // try same as sample rate, mic amp and D/A seem to alias PWM hash
+       analogWriteFrequency(KEYOUT,70312.5);
        // configured TX mux somewhere else in menu system, for microphone or usb source         
     }
     else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
@@ -940,6 +1033,7 @@ void rx(){
      status_display();
   #endif
   set_bandwidth();                         // return Q filter bandwidth if used for tx, or just some redundant processing
+  if( tx_source == MIC ) TXLow.end();      // turn off TX FIR filter
   delay(1);                                // let the dust settle
   //pinMode( RX, INPUT );                  // use pullup to 5 volts. unless attn2 is enabled
   set_attn2();                             // use current attn2 setting for RX
@@ -1039,6 +1133,7 @@ int t;
          
       }
       if( transmitting ) tx_status(0);
+        // eer_test2();      // !!! test freq sweep
    }
 
    //if( Serial.availableForWrite() > 20 ) radio_control();      // CAT.  Avoid any serial blocking. fails on Teensy, works on UNO.
@@ -1172,6 +1267,33 @@ int i;
    
 }
 
+
+void eer_test2(){      // !!! tx debug function, freq sweep, call once per ms
+static int freq = 300;
+float amp = 0.1;
+static int slower;
+
+   ++slower;  if( slower & 1 ) return;
+   if( transmitting == 0 ) return;
+   if( tx_source != SIDETONE ){
+      tx_source = SIDETONE;
+      set_tx_source();
+      SideTone.frequency( freq );
+      #ifdef TWO_TONE_TEST
+        SideTone.amplitude(0.45);
+        SideTone2.frequency( 1300 );
+        SideTone2.amplitude(0.45);
+        TxSelect.gain(3,0.98);
+        mode_change( USB );
+      #endif
+   }
+
+   #ifndef TWO_TONE_TEST
+     ++freq;  if( freq > 3100 ) freq = 300;
+     SideTone.frequency(freq);
+     SideTone.amplitude(amp);
+   #endif  
+}
 
 
 void eer_test(){      // !!! tx debug function
@@ -1352,7 +1474,7 @@ float pval;
       break;
       case TX_PHASE_U:
         phase_delay += val;
-        phase_delay = constrain(phase_delay,0,7);
+        phase_delay = constrain(phase_delay,-7,7);
         pval = phase_delay;
       break;
    }

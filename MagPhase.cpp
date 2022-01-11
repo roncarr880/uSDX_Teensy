@@ -29,6 +29,7 @@
 // decimate by N version
 
 #define DRATE 6              // decimation rate.  Input should be lowpass filtered appropriately.
+#define DC_OFFSET 0          // try a tx feature from the rx improved branch
 
 #include <Arduino.h>
 #include "MagPhase.h"
@@ -205,7 +206,7 @@ void AudioMagPhase1::update(void){
            rem = 0;  
 
            if( mode == 1 ){                                       // SSB DATA mode
-              process_hilbert( *dat1 );                           // get val1 and val2            
+              process_hilbert( *dat1 + DC_OFFSET );               // get val1 and val2            
               mag[count] = fastAM2( val1, val2);
               ph[count]  =  arctan3( val1, val2 );
            }
