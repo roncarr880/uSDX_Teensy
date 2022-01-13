@@ -415,13 +415,13 @@ AudioConnection          patchCord1(adcs1, 0, peak1, 0);
 AudioConnection          patchCord2(adcs1, 0, agc1, 0);
 AudioConnection          patchCord3(adcs1, 0, Scope2, 0);
 AudioConnection          patchCord4(adcs1, 1, agc2, 0);
-AudioConnection          patchCord5(adcs1, 1, Scope2, 3);
+AudioConnection          patchCord5(adcs1, 1, Scope2, 1);
 AudioConnection          patchCord6(agc2, QLow);
 AudioConnection          patchCord7(agc1, ILow);
 AudioConnection          patchCord8(usb2, 0, TxSelect, 1);
 //AudioConnection          patchCord9(SideTone2, 0, TxSelect, 3);
 AudioConnection          patchCord10(QLow, 0, Q_mixer, 0);
-AudioConnection          patchCord11(QLow, 0, AMdet, 3);
+AudioConnection          patchCord11(QLow, 0, AMdet, 1);
 AudioConnection          patchCord12(QLow, 0, TxSelect, 0);
 AudioConnection          patchCord13(ILow, 0, I_mixer, 0);
 AudioConnection          patchCord14(ILow, 0, AMdet, 0);
@@ -708,7 +708,6 @@ struct EER e;
 
 void eer_ssb( struct EER *e ){
 static int32_t prev_phase;
-static int32_t last_dp;
 static int dline[8];     // phase change delay
 static int din;          // delay index
 int32_t mag, dp;
@@ -721,23 +720,15 @@ static int tx_stat;
 
    dp = e->p - prev_phase;
    prev_phase = e->p;
-   php = prev_phase;                            // !!! testing variable only
+   php = prev_phase;                            //  testing variable only
    
-   if( dp < -300 ) dp += _UA;                   // allow some audio image to transmit, hilbert not perfect.
-   if( dp < 3200 ){                             // avoid sending any large positive spikes that result from previous statement
-      if( (rav_mag >> 5) < 40 ){                // avoid wideband hash when no audio to transmit 
-        // if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
-        // if( last_dp < 0 ) ++last_dp;
-        //if( last_dp > 10 ) last_dp -= 10;
-        // if( last_dp < 3000 ) last_dp += 10;
-        //dp = last_dp;
+   if( dp < -_UA/2 ) dp += _UA;
+   // if( dp < -500 ) dp = 0;                // fail safe, some audio image is normal
+   if( (rav_mag >> 5) < 40 ){                // avoid wideband hash when no audio to transmit 
          if( tx_stat == 1 ) --overs, tx_stat = 0, si5351.SendRegister(3, 0b11111111);      // disable clock 2
-      }
-      else if( tx_stat == 0 ) --overs, tx_stat = 1,  si5351.SendRegister(3, 0b11111011);      // Enable clock 2
-      // last_dp = dp;
    }
-   else dp = last_dp;                           // avoid large spikes that get through
-   //else dp = 3200;
+   else if( tx_stat == 0 ) --overs, tx_stat = 1,  si5351.SendRegister(3, 0b11111011);      // Enable clock 2
+   
    
        // implement the delay line for phasing
    if( phase_delay > 0 ){
@@ -759,6 +750,63 @@ static int tx_stat;
    e->dp = dp;
    
 }
+
+/*
+void eer_ssb( struct EER *e ){
+static int32_t prev_phase;
+static int32_t last_dp;
+static int dline[8];     // phase change delay
+static int din;          // delay index
+int32_t mag, dp;
+static int rav_mag;
+static int tx_stat;
+
+   mag = e->mag = e->m >> 5;            // 10 bits
+   rav_mag = 27853 * rav_mag + 4915 * e->m;
+   rav_mag >>= 15;
+
+   dp = e->p - prev_phase;
+   prev_phase = e->p;
+   php = prev_phase;                            // !!! testing variable only
+   
+   if( dp < -1000 ) dp += _UA;                   // allow some audio image to transmit, hilbert not perfect. -300
+   if( dp < _UA/2 ){                             // avoid sending any large positive spikes that result from previous statement
+      if( (rav_mag >> 5) < 40 ){                // avoid wideband hash when no audio to transmit 
+        // if( last_dp > 0 ) last_dp >>= 1;       // move toward a low level carrier at zero freq
+        // if( last_dp < 0 ) ++last_dp;
+        //if( last_dp > 10 ) last_dp -= 10;
+        // if( last_dp < 3000 ) last_dp += 10;
+         dp = last_dp;
+         if( tx_stat == 1 ) --overs, tx_stat = 0, si5351.SendRegister(3, 0b11111111);      // disable clock 2
+      }
+      else if( tx_stat == 0 ) --overs, tx_stat = 1,  si5351.SendRegister(3, 0b11111011);      // Enable clock 2
+      last_dp = dp;
+   }
+   //else dp = last_dp, mag = 0;                           // avoid large spikes that get through
+   else dp = 0;                                   // what to do with stuff that is out of band
+   
+       // implement the delay line for phasing
+   if( phase_delay > 0 ){
+      dline[din] = dp;
+      dp = dline[ (din + (8-phase_delay)) & 7 ];
+      ++din;
+      din &= 7;
+   }
+       // delay mag to phase
+    if( phase_delay < 0 ){
+       dline[din] = mag;
+       e->mag = dline[ (din + (8+phase_delay)) & 7];
+       ++din;
+       din &= 7;
+    }
+
+   if( mode == USB ) dp -= bfo;      // weaver mode offset USB
+   else dp = -dp + bfo;              // LSB 
+   e->dp = dp;
+   
+}
+*/
+
 
 void eer_digi( struct EER *e ){
 static int32_t rav_mag;
@@ -791,7 +839,8 @@ static int mod;
    else if( mode == UDSB ) e->dp = -bfo;       // Listen USB, tx AM
    else e->dp = bfo;                           // Listen LSB, tx AM
 
-   mag = e->m >> 6;                            // 1/2 signal level, when added below have 10 bits
+   //mag = e->m >> 6;                            // 1/2 signal level, when added below have 10 bits
+   mag = e->m >> 5;                            // AM seems to need more gain though
    
          // controlled carrier AM 
    if( (rav_mag + mag) < 0 ) rav_mag = abs(mag);
@@ -1002,7 +1051,6 @@ void set_Weaver_bandwidth(int bandwidth){
 }
 
 
-
 void tx(){
   // what needs to change to enter tx mode
 
@@ -1029,13 +1077,13 @@ void tx(){
        agc2.gain(0.98); 
        QLow.setHighpass( 0,300,0.54119610 );           //  cut dc and 60 hz hum
        QLow.setHighpass( 1,300,1.3065630);  
-       QLow.setLowpass( 2,3100,0.54119610);
-       QLow.setLowpass( 3,3100,1.3065630);
+       QLow.setLowpass( 2,2800,0.54119610);
+       QLow.setLowpass( 3,2800,1.3065630);
        //analogWriteFrequency(KEYOUT,44117);     // try same as sample rate, mic amp and D/A seem to alias PWM hash
-       analogWriteFrequency(KEYOUT,70312.5);
+       //analogWriteFrequency(KEYOUT,70312.5);
        // configured TX mux somewhere else in menu system, for microphone or usb source         
     }
-    else analogWriteFrequency(KEYOUT,70312.5);  // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
+    analogWriteFrequency(KEYOUT,70312.5);       // match 10 bits at 72mhz cpu clock. https://www.pjrc.com/teensy/td_pulse.html
 
     TXLow.begin(TXLowc,36);                     // tx bandwidth fir filter
     analogWrite(KEYOUT,0);

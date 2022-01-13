@@ -29,7 +29,7 @@
 // decimate by N version
 
 #define DRATE 6              // decimation rate.  Input should be lowpass filtered appropriately.
-#define DC_OFFSET 0          // try a tx feature from the rx improved branch
+#define DC_OFFSET 0          // try a tx feature from the rx improved branch ( it reduces the suppression of the carrier )
 
 #include <Arduino.h>
 #include "MagPhase.h"
