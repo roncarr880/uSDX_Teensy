@@ -87,7 +87,9 @@
  *                  and the transmitter sends double sideband controlled carrier ( AM in other words ).  Re-wrote the EER function separating
  *                  out the different versions of transmit logic into their own functions. It should be easier to experiment without
  *                  breaking something that works. Changed the modes order to match Argonaut V modes ( DIGI reports as FM in HRD program ). 
- *                  
+ *    Version 1.56  Have SSB voice working well.  Moved tx_drive back to the TxSelect mux and implemented audio clipping.  Did not like how              
+ *                  the audio clipping sounded and added ALC.  Can now run the mic gain double what is was before and still have a nice
+ *                  sounding signal.  Added a FIR filter after the TxSelect mux for clip filtering and more anti alias filtering. 
  *                 
  *                  
  *                  
@@ -95,7 +97,7 @@
  *             
  */
 
-#define VERSION 1.55
+#define VERSION 1.56
 
 // Paddle jack has Dah on the Tip and Dit on Ring.  Swap probably needed for most paddles.
 // Mic should have Mic on Tip, PTT on Ring for this radio.
@@ -348,9 +350,10 @@ float agc_sig = 0.3;           // made global so can set it after tx and have rx
 int attn2;                     // attenuator using T/R switch, very large decrease in volume
 int wpm = 14;                  // keyer speed, adjust with "Volume" routines
 float tone_;                   // tone control, adjust Q of the bandwidth object
-float tx_drive = 4.0;          // probably best to adjust USBc drive with the computer
+float tx_drive = 7.0;          // Adjust for some ALC action on normal voice. For my mic and voice, 4.0 is about right for no ALC.
                                // and use this for the microphone level only
 int phase_delay = -1;          // sample delay between modulation change and phase change, -7 to 7
+float alc = 1.0;               // tx ALC when using the microphone
 
 
 #define STRAIGHT    0          // CW keyer modes
@@ -645,8 +648,8 @@ struct EER e;
    e.mag = 0;
    e.dp  = 0;
    
-   if( tx_source == MIC ) e.m = (float)e.m * tx_drive;
-
+   // if( tx_source == MIC ) e.m = (float)e.m * tx_drive;   moved this to TXSource to implement speech clipping
+   
    if( mode == DIGI ) eer_digi( &e );
    else if( eer_mode == 1 ) eer_ssb( &e );
    else eer_am( &e );
@@ -1335,6 +1338,8 @@ int i;
        LCD.print((char *)"Ovr ",6*8,ROW0);
    }
 
+   if( tx_source == MIC ) alc_process( magp );
+   
    if( ++count < 100 ) return;                // partial second updates
    count = 0;
    num = AudioProcessorUsage();
@@ -1346,11 +1351,32 @@ int i;
    LCD.gotoRowCol( 5, 0 );
    for( i = 0; i < num; ++i ) LCD.putch('#');
    for( ; i < 14; ++i ) LCD.putch(' ');
-   //LCD.printNumI(saves,RIGHT,ROW3);
+   LCD.printNumF(alc,1,RIGHT,ROW3);
 #endif
 
    if( magp > magpmax ) magpmax = magp;     // print max mag on OLED after transmit.
    
+}
+
+void alc_process( int mag ){
+static int hang;
+int c;                          // change needed
+
+   c = 0;
+
+   if( mag > 1000 ){            // max mag is 1024 for 10 bits pwm
+     alc -= 0.002;
+     hang = 0;
+     c = 1;
+     if( alc < 0.1 ) alc = 0.1;      // could set a clipping point here where alc action stops and clipping in the txselect happens instead
+   }                                 // transmitted signal does get wider if audio clips
+   else if( alc < 1.0 && ++hang > 300 ){
+     alc += 0.0002;
+     c = 1;
+   }
+
+   if( c ) TxSelect.gain(0, tx_drive * alc );
+  
 }
 
 
@@ -1553,8 +1579,8 @@ float pval;
         pval = tone_;
       break;
       case TX_DRIVE_U:
-        tx_drive += (float)val * 0.1;
-        tx_drive = constrain(tx_drive,0.0,8.0);
+        tx_drive += (float)val * 0.25;
+        tx_drive = constrain(tx_drive,0.0,16.0);
         set_tx_source();
         pval = tx_drive;
       break;
@@ -1579,16 +1605,10 @@ int i;
 float drive;
 
 
-  //drive = ( tx_source == MIC ) ? tx_drive : 0.98;   // control mic gain via volume, sidetone vol via sidetone amplitude, usb via Computer app
-  drive = 0.98;                                       // make sure MagPhase object not overloaded, implement increase drive elsewhere.
+  drive = ( tx_source == MIC ) ? tx_drive : 0.98;   // control mic gain via volume, sidetone vol via sidetone amplitude, usb via Computer app
+  //drive = 0.98;                                       // make sure MagPhase object not overloaded, implement increase drive elsewhere.
   for( i = 0; i < 4; ++i ) TxSelect.gain(i,0.0);
-  TxSelect.gain(tx_source,drive);
-  //if( tx_source == MIC ){                           // (sub) or audible tone mixed in to keep phase calc happy?
-  //   SideTone.frequency( 15 );                      // Hilbert doesn't work well below 300 hz
-  //   SideTone.amplitude( 0.1 );                     // but this shows some promise to remove noise on tx
-  //   TxSelect.gain(SIDETONE,0.2);                   // 0.5
-  //}
-  
+  TxSelect.gain(tx_source,drive);  
 }
 
 void qsy( uint32_t f ){
