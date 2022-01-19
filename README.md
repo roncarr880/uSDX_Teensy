@@ -37,5 +37,5 @@ I did not install C4 C7 as adding them caused processor noise to enter the recei
 
 ##### Microphone pre-amp.
 
-A jack was installed at the CAT position and wired to a microphone preampliphier circuit installed in the footprint of IC10. The audio is placed on the Teensy A3 pin during transmit via a FET audio switch.  The gate is wired to a Teensy pin.
+A jack was installed at the CAT position and wired to a microphone preamplifier circuit installed in the footprint of IC10. The audio is placed on the Teensy A3 pin during transmit via a FET audio switch.  The gate is wired to a Teensy pin.
 ![wire4](https://github.com/roncarr880/uSDX_Teensy/blob/main/usdx_mic.png)
