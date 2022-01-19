@@ -27,18 +27,15 @@ The transmitter re-uses a couple of the receiver audio blocks for the microphone
 
 #### Wiring
 
-The QCX was built as outlined in the original PE1NNZ documentation( link above ) with some small differences.  A pullup was added on the signal RX, a pulldown was added on signal KEY OUT, a pulldown was added on signal SIG OUT.  A FET (BS170)  was added to switch the microphone signal ( DVM IC2 pin 25 ) to Teensy A3.
-
-( note sometimes I refer to AREF as VREF in the pictures )
-
+See the marked up high res QCX+ schematic.  You can get the Teensy connections from the sketch.  Most of the Teensy connections are flexible, except for the DAC pin, A2, A3.  The KeyOut pin needs to be PWM and the touch keyer needs touch pins.  The Nokia display if used is using soft SPI and can be wired however one wishes. The OLED if used is connected to the I2C pins ( A4 A5 ).  A4 and A5 also connect to the Si5351.
 I did not install C4 C7 as adding them caused processor noise to enter the receiver on a previous project.
-![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png)
-The QCX+ is wired so it works with both the PE1NNZ ATMEGA 328 program and with the Teensy 3.2.  The headphone audio circuit is duplicated but doesn't need to be.  I used a duplicate circuit as that was easier than finding another Jxx point on the QCX to bring the SIDETONE net up to the developement board. 
+( we need new pictures )
+![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png) 
 ![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
 ![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
 
 
-##### Circuit Changes
+##### Microphone pre-amp.
 
-I have since removed the black DVM wire and the purple wire to the DAH net and separated the microphone from the paddle.  A jack was installed at the CAT position and wired to a microphone preampliphier circuit installed in the footprint of IC10.
+A jack was installed at the CAT position and wired to a microphone preampliphier circuit installed in the footprint of IC10. The audio is placed on the Teensy A3 pin during transmit via a FET audio switch.  The gate is wired to a Teensy pin.
 ![wire4](https://github.com/roncarr880/uSDX_Teensy/blob/main/usdx_mic.png)
