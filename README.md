@@ -7,6 +7,8 @@ https://github.com/threeme3/QCX-SSB
 
 There is a thread on groupsio for this project:https://groups.io/g/ucx/topic/alternative_processor_project/85821954
 
+![operating](https://github.com/roncarr889/uSDX_Teensy/blob/main/usdx_bandscope.png)
+
 
 ### The Concept
 The uSDX is a minimilist hardware design where the software does as much of the work as possible.  The key part is the EER ( envelope elimination and restoration ) transmitter.  The transmit audio is split into I and Q audio, the amplitude is sent to a PWM modulator of the final amplifier and the frequency part is sent to the Si5351.  The transmitter chain does not need to be linear yet can still transmit SSB.
