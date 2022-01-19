@@ -7,7 +7,7 @@ https://github.com/threeme3/QCX-SSB
 
 There is a thread on groupsio for this project:https://groups.io/g/ucx/topic/alternative_processor_project/85821954
 
-![operating](https://github.com/roncarr889/uSDX_Teensy/blob/main/usdx_bandscope.png)
+![operating](https://github.com/roncarr880/uSDX_Teensy/blob/main/usdx_bandscope.png)
 
 
 ### The Concept
