@@ -29,10 +29,10 @@ The transmitter re-uses a couple of the receiver audio blocks for the microphone
 
 See the marked up high res QCX+ schematic.  You can get the Teensy connections from the sketch.  Most of the Teensy connections are flexible, except for the DAC pin, A2, A3.  The KeyOut pin needs to be PWM and the touch keyer needs touch pins.  The Nokia display if used is using soft SPI and can be wired however one wishes. The OLED if used is connected to the I2C pins ( A4 A5 ).  A4 and A5 also connect to the Si5351.
 I did not install C4 C7 as adding them caused processor noise to enter the receiver on a previous project.
-( we need new pictures )
-![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/top1.png) 
-![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/bot1.png)
-![wire3](https://github.com/roncarr880/uSDX_Teensy/blob/main/top2.png)
+
+![wire1](https://github.com/roncarr880/uSDX_Teensy/blob/main/Side1.png) 
+![wire2](https://github.com/roncarr880/uSDX_Teensy/blob/main/Side2.png)
+
 
 
 ##### Microphone pre-amp.
