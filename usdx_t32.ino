@@ -281,7 +281,7 @@ int screen_user = INFO;
 #define MIC 0
 #define USBc 1        // universal serial bus, conflicts with upper side band def USB, so be careful here.  
 #define SIDETONE 2 
-int tx_source = MIC;  //USBc; // starting on 17 meters FT8 with USBc audio in and out. 
+int tx_source = USBc; // starting on 17 meters FT8 with USBc audio in and out. 
 
 #define DIT 1
 #define DAH 2
@@ -317,19 +317,19 @@ struct BAND_STACK bandstack[] = {             // index is the band
   { USB ,  5330500,  500, 126, MIC,  5 },     // special 500 step for this band, not reachable in the normal step changes.
   { LSB ,  7163000, 1000, 100, MIC,  3 },
   { CW  , 10105000,  100,  68, USBc, 1 },
-  { USB , 14100000, 1000,  54, MIC,  3 },
+  { DIGI, 14074000, 1000,  54, USBc, 3 },
   { DIGI, 18100000, 1000,  40, USBc, 3 },
-  { USB , 21200000, 1000,  34, MIC,  3 },
+  { DIGI, 21074000, 1000,  34, USBc, 3 },
   { USB , 24930000, 1000,  30, MIC,  3 },
   { USB , 28300000, 1000,  26, MIC,  3 }
 };
 
-uint32_t freq = 18105000L;     // probably should init these vars from the bandstack
+uint32_t freq = 18100000L;     // probably should init these vars from the bandstack
 int rit_enabled;
 int step_ = 1000;
 int band = 5;
-int mode = USB;
-int filter = 4;
+int mode = DIGI;
+int filter = 3;
 int bfo;
 int magp;                      // tx drive display on the LCD only
 int magpmax;                   // max tx drive display on OLED after return to rx mode.  Can't write to OLED during transmit.
